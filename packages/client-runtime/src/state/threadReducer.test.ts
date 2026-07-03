@@ -40,6 +40,7 @@ const baseThread: OrchestrationThread = {
   activities: [],
   checkpoints: [],
   session: null,
+  redo: null,
 };
 
 describe("applyThreadDetailEvent", () => {
@@ -674,6 +675,119 @@ describe("applyThreadDetailEvent", () => {
         // msg-3 (turn-2) is filtered, msg-1 (no turn) and msg-2 (turn-1) remain
         expect(result.thread.messages).toHaveLength(2);
         expect(result.thread.latestTurn?.turnId).toBe("turn-1");
+      }
+    });
+
+    it("stores the redo stash carried on the event", () => {
+      const result = applyThreadDetailEvent(baseThread, {
+        ...baseEventFields,
+        sequence: 14,
+        occurredAt: "2026-04-01T04:00:00.000Z",
+        aggregateKind: "thread",
+        aggregateId: ThreadId.make("thread-1"),
+        type: "thread.reverted",
+        payload: {
+          threadId: ThreadId.make("thread-1"),
+          turnCount: 0,
+          redoStash: {
+            turnCount: 1,
+            filesRestored: true,
+            messages: [],
+            proposedPlans: [],
+            activities: [],
+            checkpoints: [],
+            latestTurn: null,
+            revertedAt: "2026-04-01T04:00:00.000Z",
+          },
+        },
+      });
+
+      expect(result.kind).toBe("updated");
+      if (result.kind === "updated") {
+        expect(result.thread.redo?.turnCount).toBe(1);
+        expect(result.thread.redo?.filesRestored).toBe(true);
+      }
+    });
+  });
+
+  describe("thread.redone", () => {
+    it("splices the restored slices back and clears the redo state", () => {
+      const stashedMessage = {
+        id: MessageId.make("msg-2"),
+        role: "assistant" as const,
+        text: "Restored response",
+        turnId: TurnId.make("turn-1"),
+        streaming: false,
+        createdAt: "2026-04-01T02:00:00.000Z",
+        updatedAt: "2026-04-01T02:00:00.000Z",
+      };
+      const stashedCheckpoint = {
+        turnId: TurnId.make("turn-1"),
+        checkpointTurnCount: 1,
+        checkpointRef: CheckpointRef.make("ref-1"),
+        status: "ready" as const,
+        files: [],
+        assistantMessageId: MessageId.make("msg-2"),
+        completedAt: "2026-04-01T02:00:00.000Z",
+      };
+      const stashedLatestTurn = {
+        turnId: TurnId.make("turn-1"),
+        state: "completed" as const,
+        requestedAt: "2026-04-01T02:00:00.000Z",
+        startedAt: "2026-04-01T02:00:00.000Z",
+        completedAt: "2026-04-01T02:00:00.000Z",
+        assistantMessageId: MessageId.make("msg-2"),
+      };
+
+      const revertedThread: OrchestrationThread = {
+        ...baseThread,
+        messages: [
+          {
+            id: MessageId.make("msg-1"),
+            role: "user",
+            text: "First",
+            turnId: null,
+            streaming: false,
+            createdAt: "2026-04-01T01:00:00.000Z",
+            updatedAt: "2026-04-01T01:00:00.000Z",
+          },
+        ],
+        redo: {
+          turnCount: 1,
+          filesRestored: true,
+          messages: [stashedMessage],
+          proposedPlans: [],
+          activities: [],
+          checkpoints: [stashedCheckpoint],
+          latestTurn: stashedLatestTurn,
+          revertedAt: "2026-04-01T03:00:00.000Z",
+        },
+      };
+
+      const result = applyThreadDetailEvent(revertedThread, {
+        ...baseEventFields,
+        sequence: 15,
+        occurredAt: "2026-04-01T05:00:00.000Z",
+        aggregateKind: "thread",
+        aggregateId: ThreadId.make("thread-1"),
+        type: "thread.redone",
+        payload: {
+          threadId: ThreadId.make("thread-1"),
+          turnCount: 1,
+          messages: [stashedMessage],
+          proposedPlans: [],
+          activities: [],
+          checkpoints: [stashedCheckpoint],
+          latestTurn: stashedLatestTurn,
+        },
+      });
+
+      expect(result.kind).toBe("updated");
+      if (result.kind === "updated") {
+        expect(result.thread.messages.map((message) => message.id)).toEqual(["msg-1", "msg-2"]);
+        expect(result.thread.checkpoints).toHaveLength(1);
+        expect(result.thread.latestTurn?.turnId).toBe("turn-1");
+        expect(result.thread.redo).toBeNull();
       }
     });
   });

@@ -114,6 +114,76 @@ it.layer(TestLayer)("CheckpointStore.layer", (it) => {
     );
   });
 
+  describe("restoreCheckpoint", () => {
+    it.effect("restores only the working tree, preserving staged changes and HEAD", () =>
+      Effect.gen(function* () {
+        const tmp = yield* makeTmpDir();
+        yield* initRepoWithCommit(tmp);
+        const fileSystem = yield* FileSystem.FileSystem;
+        const checkpointStore = yield* CheckpointStore.CheckpointStore;
+        const threadId = ThreadId.make("thread-restore-semantics");
+        const checkpointRef = checkpointRefForThreadTurn(threadId, 0);
+
+        // Checkpoint the clean state (README.md = "# test\n").
+        yield* checkpointStore.captureCheckpoint({ cwd: tmp, checkpointRef });
+        const headBefore = yield* git(tmp, ["rev-parse", "HEAD"]);
+
+        // Simulate the user's flow: edit + stage, then edit again on top,
+        // and create a new untracked file after the checkpoint.
+        yield* writeTextFile(NodePath.join(tmp, "README.md"), "staged edit\n");
+        yield* git(tmp, ["add", "README.md"]);
+        yield* writeTextFile(NodePath.join(tmp, "README.md"), "unstaged edit\n");
+        yield* writeTextFile(NodePath.join(tmp, "scratch.txt"), "created after checkpoint\n");
+
+        const restored = yield* checkpointStore.restoreCheckpoint({
+          cwd: tmp,
+          checkpointRef,
+        });
+        expect(restored).toBe(true);
+
+        // Working tree is back at the checkpoint content…
+        expect(yield* fileSystem.readFileString(NodePath.join(tmp, "README.md"))).toBe("# test\n");
+        // …and the untracked file created after the checkpoint is gone.
+        expect(yield* fileSystem.exists(NodePath.join(tmp, "scratch.txt"))).toBe(false);
+
+        // The index still holds the staged edit — restore never touches it.
+        expect(yield* git(tmp, ["show", ":README.md"])).toBe("staged edit");
+        // HEAD did not move: no commit was checked out or reset.
+        expect(yield* git(tmp, ["rev-parse", "HEAD"])).toBe(headBefore);
+        // Status shows both: staged edit (index vs HEAD) and the revert on
+        // top of it (worktree vs index).
+        expect(yield* git(tmp, ["status", "--porcelain"])).toBe("MM README.md");
+      }),
+    );
+
+    it.effect("keeps files that were untracked at capture time", () =>
+      Effect.gen(function* () {
+        const tmp = yield* makeTmpDir();
+        yield* initRepoWithCommit(tmp);
+        const fileSystem = yield* FileSystem.FileSystem;
+        const checkpointStore = yield* CheckpointStore.CheckpointStore;
+        const threadId = ThreadId.make("thread-restore-untracked");
+        const checkpointRef = checkpointRefForThreadTurn(threadId, 0);
+
+        // notes.txt is untracked but part of the checkpoint tree (capture
+        // stages everything into its temp index).
+        yield* writeTextFile(NodePath.join(tmp, "notes.txt"), "keep me\n");
+        yield* checkpointStore.captureCheckpoint({ cwd: tmp, checkpointRef });
+        yield* writeTextFile(NodePath.join(tmp, "later.txt"), "delete me\n");
+
+        const restored = yield* checkpointStore.restoreCheckpoint({
+          cwd: tmp,
+          checkpointRef,
+        });
+        expect(restored).toBe(true);
+
+        // Untracked-at-capture file survives; untracked-after-capture is removed.
+        expect(yield* fileSystem.exists(NodePath.join(tmp, "notes.txt"))).toBe(true);
+        expect(yield* fileSystem.exists(NodePath.join(tmp, "later.txt"))).toBe(false);
+      }),
+    );
+  });
+
   describe("diffCheckpoints", () => {
     it.effect("returns full oversized checkpoint diffs without truncation", () =>
       Effect.gen(function* () {

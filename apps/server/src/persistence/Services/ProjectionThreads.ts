@@ -10,6 +10,7 @@ import {
   IsoDateTime,
   ModelSelection,
   NonNegativeInt,
+  OrchestrationThreadRedoState,
   ProjectId,
   ProviderInteractionMode,
   RuntimeMode,
@@ -41,6 +42,8 @@ export const ProjectionThread = Schema.Struct({
   pendingUserInputCount: NonNegativeInt,
   hasActionableProposedPlan: NonNegativeInt,
   deletedAt: Schema.NullOr(IsoDateTime),
+  // Stash of reverted conversation content; NULL when there is nothing to redo.
+  redo: Schema.NullOr(OrchestrationThreadRedoState),
 });
 export type ProjectionThread = typeof ProjectionThread.Type;
 

@@ -353,40 +353,39 @@ describe("CheckpointReactor", () => {
     scope = await Effect.runPromise(Scope.make("sequential"));
     await Effect.runPromise(reactor.start().pipe(Scope.provide(scope)));
     const drain = () => Effect.runPromise(reactor.drain);
+    // Promise-based dispatch wrapper so tests don't need manual Effect runners.
+    const dispatch = (command: Parameters<typeof engine.dispatch>[0]) =>
+      Effect.runPromise(engine.dispatch(command));
 
     const createdAt = "2026-01-01T00:00:00.000Z";
-    await Effect.runPromise(
-      engine.dispatch({
-        type: "project.create",
-        commandId: CommandId.make("cmd-project-create"),
-        projectId: asProjectId("project-1"),
-        title: "Test Project",
-        workspaceRoot: options?.projectWorkspaceRoot ?? cwd,
-        defaultModelSelection: {
-          instanceId: ProviderInstanceId.make("codex"),
-          model: "gpt-5-codex",
-        },
-        createdAt,
-      }),
-    );
-    await Effect.runPromise(
-      engine.dispatch({
-        type: "thread.create",
-        commandId: CommandId.make("cmd-thread-create"),
-        threadId: ThreadId.make("thread-1"),
-        projectId: asProjectId("project-1"),
-        title: "Thread",
-        modelSelection: {
-          instanceId: ProviderInstanceId.make("codex"),
-          model: "gpt-5-codex",
-        },
-        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
-        runtimeMode: "approval-required",
-        branch: null,
-        worktreePath: options?.threadWorktreePath ?? cwd,
-        createdAt,
-      }),
-    );
+    await dispatch({
+      type: "project.create",
+      commandId: CommandId.make("cmd-project-create"),
+      projectId: asProjectId("project-1"),
+      title: "Test Project",
+      workspaceRoot: options?.projectWorkspaceRoot ?? cwd,
+      defaultModelSelection: {
+        instanceId: ProviderInstanceId.make("codex"),
+        model: "gpt-5-codex",
+      },
+      createdAt,
+    });
+    await dispatch({
+      type: "thread.create",
+      commandId: CommandId.make("cmd-thread-create"),
+      threadId: ThreadId.make("thread-1"),
+      projectId: asProjectId("project-1"),
+      title: "Thread",
+      modelSelection: {
+        instanceId: ProviderInstanceId.make("codex"),
+        model: "gpt-5-codex",
+      },
+      interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+      runtimeMode: "approval-required",
+      branch: null,
+      worktreePath: options?.threadWorktreePath ?? cwd,
+      createdAt,
+    });
 
     if (options?.seedFilesystemCheckpoints ?? true) {
       await runtime.runPromise(
@@ -413,6 +412,7 @@ describe("CheckpointReactor", () => {
 
     return {
       engine,
+      dispatch,
       readModel: () => Effect.runPromise(snapshotQuery.getSnapshot()),
       provider,
       cwd,
@@ -964,9 +964,189 @@ describe("CheckpointReactor", () => {
       numTurns: 1,
     });
     expect(NodeFS.readFileSync(NodePath.join(harness.cwd, "README.md"), "utf8")).toBe("v2\n");
+    // Newer checkpoint refs are kept so the revert can be redone.
     expect(
       gitRefExists(harness.cwd, checkpointRefForThreadTurn(ThreadId.make("thread-1"), 2)),
-    ).toBe(false);
+    ).toBe(true);
+  });
+
+  it("skips filesystem restore but still rolls back conversation when restoreFiles is false", async () => {
+    const harness = await createHarness();
+    const createdAt = "2026-01-01T00:00:00.000Z";
+
+    await harness.dispatch({
+      type: "thread.session.set",
+      commandId: CommandId.make("cmd-session-set-keep-files"),
+      threadId: ThreadId.make("thread-1"),
+      session: {
+        threadId: ThreadId.make("thread-1"),
+        status: "ready",
+        providerName: "codex",
+        runtimeMode: "approval-required",
+        activeTurnId: null,
+        lastError: null,
+        updatedAt: createdAt,
+      },
+      createdAt,
+    });
+
+    await harness.dispatch({
+      type: "thread.turn.diff.complete",
+      commandId: CommandId.make("cmd-diff-keep-files-1"),
+      threadId: ThreadId.make("thread-1"),
+      turnId: asTurnId("turn-1"),
+      completedAt: createdAt,
+      checkpointRef: checkpointRefForThreadTurn(ThreadId.make("thread-1"), 1),
+      status: "ready",
+      files: [],
+      checkpointTurnCount: 1,
+      createdAt,
+    });
+    await harness.dispatch({
+      type: "thread.turn.diff.complete",
+      commandId: CommandId.make("cmd-diff-keep-files-2"),
+      threadId: ThreadId.make("thread-1"),
+      turnId: asTurnId("turn-2"),
+      completedAt: createdAt,
+      checkpointRef: checkpointRefForThreadTurn(ThreadId.make("thread-1"), 2),
+      status: "ready",
+      files: [],
+      checkpointTurnCount: 2,
+      createdAt,
+    });
+
+    await harness.dispatch({
+      type: "thread.checkpoint.revert",
+      commandId: CommandId.make("cmd-revert-request-keep-files"),
+      threadId: ThreadId.make("thread-1"),
+      turnCount: 1,
+      restoreFiles: false,
+      createdAt,
+    });
+
+    await waitForEvent(harness.engine, (event) => event.type === "thread.reverted");
+    const thread = await waitForThread(
+      harness.readModel,
+      (entry) => entry.checkpoints.length === 1,
+    );
+
+    // Conversation state rolled back exactly like a normal revert…
+    expect(thread.checkpoints[0]?.checkpointTurnCount).toBe(1);
+    expect(harness.provider.rollbackConversation).toHaveBeenCalledTimes(1);
+    expect(harness.provider.rollbackConversation).toHaveBeenCalledWith({
+      threadId: ThreadId.make("thread-1"),
+      numTurns: 1,
+    });
+    // …but workspace files keep their current (v3) contents.
+    expect(NodeFS.readFileSync(NodePath.join(harness.cwd, "README.md"), "utf8")).toBe("v3\n");
+    // Newer checkpoint refs are kept so the revert can be redone.
+    expect(
+      gitRefExists(harness.cwd, checkpointRefForThreadTurn(ThreadId.make("thread-1"), 2)),
+    ).toBe(true);
+  });
+
+  it("redoes a revert: rolls files forward and restores the truncated conversation", async () => {
+    const harness = await createHarness();
+    const createdAt = "2026-01-01T00:00:00.000Z";
+
+    await harness.dispatch({
+      type: "thread.session.set",
+      commandId: CommandId.make("cmd-session-set-redo"),
+      threadId: ThreadId.make("thread-1"),
+      session: {
+        threadId: ThreadId.make("thread-1"),
+        status: "ready",
+        providerName: "codex",
+        runtimeMode: "approval-required",
+        activeTurnId: null,
+        lastError: null,
+        updatedAt: createdAt,
+      },
+      createdAt,
+    });
+
+    await harness.dispatch({
+      type: "thread.turn.diff.complete",
+      commandId: CommandId.make("cmd-diff-redo-1"),
+      threadId: ThreadId.make("thread-1"),
+      turnId: asTurnId("turn-1"),
+      completedAt: createdAt,
+      checkpointRef: checkpointRefForThreadTurn(ThreadId.make("thread-1"), 1),
+      status: "ready",
+      files: [],
+      checkpointTurnCount: 1,
+      createdAt,
+    });
+    await harness.dispatch({
+      type: "thread.turn.diff.complete",
+      commandId: CommandId.make("cmd-diff-redo-2"),
+      threadId: ThreadId.make("thread-1"),
+      turnId: asTurnId("turn-2"),
+      completedAt: createdAt,
+      checkpointRef: checkpointRefForThreadTurn(ThreadId.make("thread-1"), 2),
+      status: "ready",
+      files: [],
+      checkpointTurnCount: 2,
+      createdAt,
+    });
+
+    // Revert to turn 1: files roll back to v2, the turn-2 slice is stashed.
+    await harness.dispatch({
+      type: "thread.checkpoint.revert",
+      commandId: CommandId.make("cmd-revert-for-redo"),
+      threadId: ThreadId.make("thread-1"),
+      turnCount: 1,
+      createdAt,
+    });
+    await waitForEvent(harness.engine, (event) => event.type === "thread.reverted");
+    await waitForThread(harness.readModel, (entry) => entry.checkpoints.length === 1);
+    expect(NodeFS.readFileSync(NodePath.join(harness.cwd, "README.md"), "utf8")).toBe("v2\n");
+
+    const revertedSnapshot = await harness.readModel();
+    const revertedThread = revertedSnapshot.threads.find(
+      (entry) => entry.id === ThreadId.make("thread-1"),
+    );
+    expect(revertedThread?.redo).not.toBeNull();
+    expect(revertedThread?.redo?.turnCount).toBe(2);
+    expect(revertedThread?.redo?.filesRestored).toBe(true);
+
+    // Redo: files roll forward to v3 and the stashed slices come back.
+    await harness.dispatch({
+      type: "thread.checkpoint.redo",
+      commandId: CommandId.make("cmd-redo-request"),
+      threadId: ThreadId.make("thread-1"),
+      createdAt,
+    });
+    await waitForEvent(harness.engine, (event) => event.type === "thread.redone");
+    const thread = await waitForThread(
+      harness.readModel,
+      (entry) => entry.checkpoints.length === 2,
+    );
+
+    expect(thread.latestTurn?.turnId).toBe("turn-2");
+    expect(thread.checkpoints.map((entry) => entry.checkpointTurnCount)).toEqual([1, 2]);
+    expect(NodeFS.readFileSync(NodePath.join(harness.cwd, "README.md"), "utf8")).toBe("v3\n");
+
+    // The stash is consumed: no further redo is possible.
+    const redoneSnapshot = await harness.readModel();
+    const redoneThread = redoneSnapshot.threads.find(
+      (entry) => entry.id === ThreadId.make("thread-1"),
+    );
+    expect(redoneThread?.redo).toBeNull();
+  });
+
+  it("rejects redo when there is no revert stash", async () => {
+    const harness = await createHarness();
+    const createdAt = "2026-01-01T00:00:00.000Z";
+
+    await expect(
+      harness.dispatch({
+        type: "thread.checkpoint.redo",
+        commandId: CommandId.make("cmd-redo-without-stash"),
+        threadId: ThreadId.make("thread-1"),
+        createdAt,
+      }),
+    ).rejects.toThrow("has no revert to redo");
   });
 
   it("executes provider revert and emits thread.reverted for claude sessions", async () => {

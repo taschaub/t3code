@@ -12,6 +12,7 @@ import type {
   OrchestrationThreadActivity,
   TurnId,
 } from "@t3tools/contracts";
+import { applyRedoSlices } from "@t3tools/shared/threadRedo";
 
 export type ThreadDetailReducerResult =
   | { readonly kind: "updated"; readonly thread: OrchestrationThread }
@@ -78,6 +79,7 @@ export function applyThreadDetailEvent(
           activities: [],
           checkpoints: [],
           session: null,
+          redo: null,
         },
       };
 
@@ -149,6 +151,9 @@ export function applyThreadDetailEvent(
             : {}),
           runtimeMode: event.payload.runtimeMode,
           interactionMode: event.payload.interactionMode,
+          // A new turn diverges the history: any pending revert-redo stash
+          // can no longer be applied (mirrors the server projector).
+          redo: null,
           updatedAt: event.occurredAt,
         },
       };
@@ -450,6 +455,41 @@ export function applyThreadDetailEvent(
                   completedAt: latestCheckpoint.completedAt,
                   assistantMessageId: latestCheckpoint.assistantMessageId ?? null,
                 },
+          // Stash of the truncated content, computed server-side and carried
+          // on the event. Enables the "Redo" affordance until a new turn.
+          redo: event.payload.redoStash ?? null,
+          updatedAt: event.occurredAt,
+        },
+      };
+    }
+
+    // ── Redo (undo of a revert) ─────────────────────────────────────
+    case "thread.redone": {
+      const restored = applyRedoSlices(
+        {
+          messages: thread.messages,
+          proposedPlans: thread.proposedPlans,
+          activities: thread.activities,
+          checkpoints: thread.checkpoints,
+        },
+        {
+          messages: event.payload.messages,
+          proposedPlans: event.payload.proposedPlans,
+          activities: event.payload.activities,
+          checkpoints: event.payload.checkpoints,
+        },
+      );
+
+      return {
+        kind: "updated",
+        thread: {
+          ...thread,
+          messages: restored.messages,
+          proposedPlans: restored.proposedPlans,
+          activities: restored.activities,
+          checkpoints: restored.checkpoints,
+          latestTurn: event.payload.latestTurn,
+          redo: null,
           updatedAt: event.occurredAt,
         },
       };
@@ -474,6 +514,7 @@ export function applyThreadDetailEvent(
     case "thread.approval-response-requested":
     case "thread.user-input-response-requested":
     case "thread.checkpoint-revert-requested":
+    case "thread.checkpoint-redo-requested":
       return { kind: "unchanged" };
   }
 
