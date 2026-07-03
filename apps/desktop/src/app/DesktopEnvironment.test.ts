@@ -1,6 +1,7 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 
@@ -123,6 +124,58 @@ describe("DesktopEnvironment", () => {
 
       assert.equal(environment.appUserModelId, "com.t3tools.t3code.dev.local");
     }),
+  );
+
+  it.effect("gives unpackaged non-dev runs the isolated Local identity", () =>
+    Effect.gen(function* () {
+      const environment = yield* makeEnvironment({}, {});
+
+      assert.equal(environment.isLocalBuild, true);
+      assert.deepEqual(environment.branding, {
+        baseName: "T3 Code",
+        stageLabel: "Local",
+        displayName: "T3 Code (Local)",
+      });
+      assert.equal(environment.userDataDirName, "t3code-local");
+      assert.equal(environment.legacyUserDataDirName, "T3 Code (Local)");
+      assert.equal(environment.appUserModelId, "com.t3tools.t3code.local");
+      assert.equal(environment.linuxWmClass, "t3code-local");
+      assert.equal(environment.baseDir, "/Users/alice/.t3-local");
+      assert.equal(environment.stateDir, "/Users/alice/.t3-local/userdata");
+    }),
+  );
+
+  it.effect("keeps the release identity for packaged builds without the local marker", () =>
+    Effect.gen(function* () {
+      const environment = yield* makeEnvironment({ isPackaged: true }, {});
+
+      assert.equal(environment.isLocalBuild, false);
+      assert.equal(environment.branding.stageLabel, "Alpha");
+      assert.equal(environment.branding.displayName, "T3 Code (Alpha)");
+      assert.equal(environment.userDataDirName, "t3code");
+      assert.equal(environment.legacyUserDataDirName, "T3 Code (Alpha)");
+      assert.equal(environment.appUserModelId, "com.t3tools.t3code");
+      assert.equal(environment.baseDir, "/Users/alice/.t3");
+    }),
+  );
+
+  it.effect("switches packaged builds carrying the local marker to the Local identity", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const appRoot = yield* fs.makeTempDirectoryScoped({ prefix: "t3-desktop-env-local-" });
+      yield* fs.writeFileString(
+        `${appRoot}/package.json`,
+        '{"t3codeCommitHash":"abcdef123456","t3codeLocalBuild":true}',
+      );
+
+      const environment = yield* makeEnvironment({ isPackaged: true, appPath: appRoot }, {});
+
+      assert.equal(environment.isLocalBuild, true);
+      assert.equal(environment.branding.stageLabel, "Local");
+      assert.equal(environment.userDataDirName, "t3code-local");
+      assert.equal(environment.appUserModelId, "com.t3tools.t3code.local");
+      assert.equal(environment.baseDir, "/Users/alice/.t3-local");
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
   it.effect("resolves picker defaults without nullish sentinels", () =>
