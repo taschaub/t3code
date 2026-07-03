@@ -380,36 +380,36 @@ describe("ProviderCommandReactor", () => {
     scope = await Effect.runPromise(Scope.make("sequential"));
     await Effect.runPromise(reactor.start().pipe(Scope.provide(scope)));
     const drain = () => Effect.runPromise(reactor.drain);
+    // Promise-based dispatch wrapper so tests don't need manual Effect runners.
+    const dispatch = (command: Parameters<typeof engine.dispatch>[0]) =>
+      Effect.runPromise(engine.dispatch(command));
 
-    await Effect.runPromise(
-      engine.dispatch({
-        type: "project.create",
-        commandId: CommandId.make("cmd-project-create"),
-        projectId: asProjectId("project-1"),
-        title: "Provider Project",
-        workspaceRoot: "/tmp/provider-project",
-        defaultModelSelection: modelSelection,
-        createdAt: now,
-      }),
-    );
-    await Effect.runPromise(
-      engine.dispatch({
-        type: "thread.create",
-        commandId: CommandId.make("cmd-thread-create"),
-        threadId: ThreadId.make("thread-1"),
-        projectId: asProjectId("project-1"),
-        title: "Thread",
-        modelSelection: modelSelection,
-        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
-        runtimeMode: "approval-required",
-        branch: null,
-        worktreePath: null,
-        createdAt: now,
-      }),
-    );
+    await dispatch({
+      type: "project.create",
+      commandId: CommandId.make("cmd-project-create"),
+      projectId: asProjectId("project-1"),
+      title: "Provider Project",
+      workspaceRoot: "/tmp/provider-project",
+      defaultModelSelection: modelSelection,
+      createdAt: now,
+    });
+    await dispatch({
+      type: "thread.create",
+      commandId: CommandId.make("cmd-thread-create"),
+      threadId: ThreadId.make("thread-1"),
+      projectId: asProjectId("project-1"),
+      title: "Thread",
+      modelSelection: modelSelection,
+      interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+      runtimeMode: "approval-required",
+      branch: null,
+      worktreePath: null,
+      createdAt: now,
+    });
 
     return {
       engine,
+      dispatch,
       readModel: () => Effect.runPromise(snapshotQuery.getSnapshot()),
       startSession,
       sendTurn,
@@ -2051,6 +2051,111 @@ describe("ProviderCommandReactor", () => {
         (activity.payload as Record<string, unknown>).requestId === "user-input-request-1",
     );
     expect(resolvedActivity).toBeUndefined();
+  });
+
+  it("prepends the copied-history transcript on the first turn of a branched thread", async () => {
+    const harness = await createHarness();
+    const now = "2026-01-01T00:00:00.000Z";
+
+    // Turn 1 on the source thread: user prompt + completed assistant reply.
+    await harness.dispatch({
+      type: "thread.turn.start",
+      commandId: CommandId.make("cmd-turn-start-branch-source"),
+      threadId: ThreadId.make("thread-1"),
+      message: {
+        messageId: asMessageId("user-message-branch-source"),
+        role: "user",
+        text: "hello reactor",
+        attachments: [],
+      },
+      interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+      runtimeMode: "approval-required",
+      createdAt: now,
+    });
+    await waitFor(() => harness.sendTurn.mock.calls.length === 1);
+    await harness.dispatch({
+      type: "thread.message.assistant.delta",
+      commandId: CommandId.make("cmd-assistant-delta-branch-source"),
+      threadId: ThreadId.make("thread-1"),
+      messageId: asMessageId("assistant-message-branch-source"),
+      delta: "Assistant reply about reactors.",
+      turnId: asTurnId("turn-1"),
+      createdAt: now,
+    });
+    await harness.dispatch({
+      type: "thread.message.assistant.complete",
+      commandId: CommandId.make("cmd-assistant-complete-branch-source"),
+      threadId: ThreadId.make("thread-1"),
+      messageId: asMessageId("assistant-message-branch-source"),
+      turnId: asTurnId("turn-1"),
+      createdAt: now,
+    });
+
+    // Duplicate the whole conversation into thread-2.
+    await harness.dispatch({
+      type: "thread.branch",
+      commandId: CommandId.make("cmd-branch-thread"),
+      sourceThreadId: ThreadId.make("thread-1"),
+      threadId: ThreadId.make("thread-2"),
+      createdAt: now,
+    });
+
+    // First turn of the branched thread carries the transcript prefix.
+    await harness.dispatch({
+      type: "thread.turn.start",
+      commandId: CommandId.make("cmd-turn-start-branched"),
+      threadId: ThreadId.make("thread-2"),
+      message: {
+        messageId: asMessageId("user-message-branched"),
+        role: "user",
+        text: "follow-up in branch",
+        attachments: [],
+      },
+      interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+      runtimeMode: "approval-required",
+      createdAt: now,
+    });
+    await waitFor(() => harness.sendTurn.mock.calls.length === 2);
+
+    const branchedSendRequest = harness.sendTurn.mock.calls[1]?.[0] as {
+      threadId?: ThreadId;
+      input?: string;
+    };
+    expect(branchedSendRequest.threadId).toBe(ThreadId.make("thread-2"));
+    expect(branchedSendRequest.input).toContain("<branched_conversation_context>");
+    expect(branchedSendRequest.input).toContain("[user]: hello reactor");
+    expect(branchedSendRequest.input).toContain("[assistant]: Assistant reply about reactors.");
+    expect(branchedSendRequest.input?.endsWith("follow-up in branch")).toBe(true);
+
+    // The stored user message stays clean — only the provider input carries
+    // the transcript.
+    const readModel = await harness.readModel();
+    const branchedThread = readModel.threads.find(
+      (entry) => entry.id === ThreadId.make("thread-2"),
+    );
+    const branchedUserMessage = branchedThread?.messages.find(
+      (entry) => entry.id === asMessageId("user-message-branched"),
+    );
+    expect(branchedUserMessage?.text).toBe("follow-up in branch");
+
+    // Second turn on the branched thread (session now exists) is sent as-is.
+    await harness.dispatch({
+      type: "thread.turn.start",
+      commandId: CommandId.make("cmd-turn-start-branched-2"),
+      threadId: ThreadId.make("thread-2"),
+      message: {
+        messageId: asMessageId("user-message-branched-2"),
+        role: "user",
+        text: "second branched prompt",
+        attachments: [],
+      },
+      interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+      runtimeMode: "approval-required",
+      createdAt: now,
+    });
+    await waitFor(() => harness.sendTurn.mock.calls.length === 3);
+    const secondSendRequest = harness.sendTurn.mock.calls[2]?.[0] as { input?: string };
+    expect(secondSendRequest.input).toBe("second branched prompt");
   });
 
   it("reacts to thread.session.stop by stopping provider session and clearing thread session state", async () => {

@@ -704,7 +704,7 @@ it.live("records failed turn runtime state and checkpoint status as error", () =
   ),
 );
 
-it.live("reverts to an earlier checkpoint and trims checkpoint projections + git refs", () =>
+it.live("reverts to an earlier checkpoint, trims projections, and keeps newer refs for redo", () =>
   withHarness((harness) =>
     Effect.gen(function* () {
       yield* seedProjectAndThread(harness);
@@ -873,9 +873,10 @@ it.live("reverts to an earlier checkpoint and trims checkpoint projections + git
         NodeFS.readFileSync(NodePath.join(harness.workspaceDir, "README.md"), "utf8"),
         "v2\n",
       );
+      // The newer checkpoint ref is kept alive so the revert can be redone.
       assert.equal(
         gitRefExists(harness.workspaceDir, checkpointRefForThreadTurn(THREAD_ID, 2)),
-        false,
+        true,
       );
       assert.deepEqual(harness.adapterHarness!.getRollbackCalls(THREAD_ID), [1]);
 
@@ -1430,9 +1431,10 @@ it.live("reverts claudeAgent turns and rolls back provider conversation state", 
           gitRefExists(harness.workspaceDir, checkpointRefForThreadTurn(THREAD_ID, 1)),
           true,
         );
+        // The newer checkpoint ref is kept alive so the revert can be redone.
         assert.equal(
           gitRefExists(harness.workspaceDir, checkpointRefForThreadTurn(THREAD_ID, 2)),
-          false,
+          true,
         );
         assert.deepEqual(harness.adapterHarness!.getRollbackCalls(THREAD_ID), [1]);
       }),

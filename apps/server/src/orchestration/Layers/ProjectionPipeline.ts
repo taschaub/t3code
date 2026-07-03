@@ -612,6 +612,7 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
             pendingUserInputCount: 0,
             hasActionableProposedPlan: 0,
             deletedAt: null,
+            redo: null,
           });
           return;
 
@@ -797,8 +798,42 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
             ...existingRow.value,
             latestTurnId,
             updatedAt: event.occurredAt,
+            // Persist the redo stash so redo survives server restarts.
+            redo: event.payload.redoStash ?? null,
           });
           yield* refreshThreadShellSummary(event.payload.threadId);
+          return;
+        }
+
+        case "thread.redone": {
+          const existingRow = yield* projectionThreadRepository.getById({
+            threadId: event.payload.threadId,
+          });
+          if (Option.isNone(existingRow)) {
+            return;
+          }
+          yield* projectionThreadRepository.upsert({
+            ...existingRow.value,
+            latestTurnId: event.payload.latestTurn?.turnId ?? existingRow.value.latestTurnId,
+            updatedAt: event.occurredAt,
+            redo: null,
+          });
+          yield* refreshThreadShellSummary(event.payload.threadId);
+          return;
+        }
+
+        // A new turn diverges history: whatever was stashed for redo is stale.
+        case "thread.turn-start-requested": {
+          const existingRow = yield* projectionThreadRepository.getById({
+            threadId: event.payload.threadId,
+          });
+          if (Option.isNone(existingRow) || existingRow.value.redo === null) {
+            return;
+          }
+          yield* projectionThreadRepository.upsert({
+            ...existingRow.value,
+            redo: null,
+          });
           return;
         }
 
@@ -881,6 +916,30 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
           return;
         }
 
+        case "thread.redone": {
+          // Restore the message rows removed by the reverted revert. The
+          // restored slices travel on the event payload.
+          yield* Effect.forEach(
+            event.payload.messages,
+            (message) =>
+              projectionThreadMessageRepository.upsert({
+                messageId: message.id,
+                threadId: event.payload.threadId,
+                turnId: message.turnId,
+                role: message.role,
+                text: message.text,
+                ...(message.attachments !== undefined
+                  ? { attachments: [...message.attachments] }
+                  : {}),
+                isStreaming: message.streaming,
+                createdAt: message.createdAt,
+                updatedAt: message.updatedAt,
+              }),
+            { concurrency: 1 },
+          ).pipe(Effect.asVoid);
+          return;
+        }
+
         default:
           return;
       }
@@ -929,6 +988,25 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
           yield* Effect.forEach(keptRows, projectionThreadProposedPlanRepository.upsert, {
             concurrency: 1,
           }).pipe(Effect.asVoid);
+          return;
+        }
+
+        case "thread.redone": {
+          yield* Effect.forEach(
+            event.payload.proposedPlans,
+            (plan) =>
+              projectionThreadProposedPlanRepository.upsert({
+                planId: plan.id,
+                threadId: event.payload.threadId,
+                turnId: plan.turnId,
+                planMarkdown: plan.planMarkdown,
+                implementedAt: plan.implementedAt,
+                implementationThreadId: plan.implementationThreadId,
+                createdAt: plan.createdAt,
+                updatedAt: plan.updatedAt,
+              }),
+            { concurrency: 1 },
+          ).pipe(Effect.asVoid);
           return;
         }
 
@@ -981,6 +1059,26 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
           yield* Effect.forEach(keptRows, projectionThreadActivityRepository.upsert, {
             concurrency: 1,
           }).pipe(Effect.asVoid);
+          return;
+        }
+
+        case "thread.redone": {
+          yield* Effect.forEach(
+            event.payload.activities,
+            (activity) =>
+              projectionThreadActivityRepository.upsert({
+                activityId: activity.id,
+                threadId: event.payload.threadId,
+                turnId: activity.turnId,
+                tone: activity.tone,
+                kind: activity.kind,
+                summary: activity.summary,
+                payload: activity.payload,
+                ...(activity.sequence !== undefined ? { sequence: activity.sequence } : {}),
+                createdAt: activity.createdAt,
+              }),
+            { concurrency: 1 },
+          ).pipe(Effect.asVoid);
           return;
         }
 
@@ -1323,6 +1421,34 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
                     ...turn,
                     turnId: turn.turnId,
                   }),
+            { concurrency: 1 },
+          ).pipe(Effect.asVoid);
+          return;
+        }
+
+        case "thread.redone": {
+          // Re-create the turn rows removed by the reverted revert from the
+          // restored checkpoint summaries (mirrors the turn-diff-completed
+          // fallback shape).
+          yield* Effect.forEach(
+            event.payload.checkpoints,
+            (checkpoint) =>
+              projectionTurnRepository.upsertByTurnId({
+                turnId: checkpoint.turnId,
+                threadId: event.payload.threadId,
+                pendingMessageId: null,
+                sourceProposedPlanThreadId: null,
+                sourceProposedPlanId: null,
+                assistantMessageId: checkpoint.assistantMessageId,
+                state: checkpoint.status === "error" ? "error" : "completed",
+                requestedAt: checkpoint.completedAt,
+                startedAt: checkpoint.completedAt,
+                completedAt: checkpoint.completedAt,
+                checkpointTurnCount: checkpoint.checkpointTurnCount,
+                checkpointRef: checkpoint.checkpointRef,
+                checkpointStatus: checkpoint.status,
+                checkpointFiles: checkpoint.files,
+              }),
             { concurrency: 1 },
           ).pipe(Effect.asVoid);
           return;

@@ -170,6 +170,7 @@ const makeDefaultOrchestrationReadModel = () => {
         proposedPlans: [],
         checkpoints: [],
         deletedAt: null,
+        redo: null,
       },
     ],
   };
@@ -5500,6 +5501,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
             proposedPlans: [],
             checkpoints: [],
             deletedAt: null,
+            redo: null,
           },
         ],
       };

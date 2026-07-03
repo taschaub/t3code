@@ -62,6 +62,7 @@ const BASE_THREAD: OrchestrationThread = {
   activities: [],
   checkpoints: [],
   session: null,
+  redo: null,
 };
 
 type TestThreadInput = OrchestrationThreadStreamItem | Error;

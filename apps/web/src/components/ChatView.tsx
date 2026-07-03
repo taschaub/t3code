@@ -137,7 +137,7 @@ import { BranchToolbar } from "./BranchToolbar";
 import { resolveShortcutCommand, shortcutLabelForCommand } from "../keybindings";
 import PlanSidebar from "./PlanSidebar";
 import ThreadTerminalDrawer from "./ThreadTerminalDrawer";
-import { ChevronDownIcon, TriangleAlertIcon, WifiOffIcon } from "lucide-react";
+import { ChevronDownIcon, Redo2Icon, TriangleAlertIcon, WifiOffIcon } from "lucide-react";
 import { cn, randomHex } from "~/lib/utils";
 import { COLLAPSED_SIDEBAR_TITLEBAR_INSET_CLASS } from "~/workspaceTitlebar";
 import { stackedThreadToast, toastManager } from "./ui/toast";
@@ -242,6 +242,15 @@ import { RightPanelSheet } from "./RightPanelSheet";
 import { previewEnvironment } from "../state/preview";
 import { useAtomCommand } from "../state/use-atom-command";
 import { Button } from "./ui/button";
+import {
+  AlertDialog,
+  AlertDialogClose,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogPopup,
+  AlertDialogTitle,
+} from "./ui/alert-dialog";
 import {
   buildVersionMismatchDismissalKey,
   dismissVersionMismatch,
@@ -1024,6 +1033,10 @@ function ChatViewContent(props: ChatViewProps) {
   const revertThreadCheckpoint = useAtomCommand(threadEnvironment.revertCheckpoint, {
     reportFailure: false,
   });
+  const redoThreadCheckpoint = useAtomCommand(threadEnvironment.redoCheckpoint, {
+    reportFailure: false,
+  });
+  const branchThread = useAtomCommand(threadEnvironment.branch, { reportFailure: false });
   const openPreview = useAtomCommand(previewEnvironment.open, { reportFailure: false });
   const closePreview = useAtomCommand(previewEnvironment.close, "preview close");
   const { environments } = useEnvironments();
@@ -1110,6 +1123,16 @@ function ChatViewContent(props: ChatViewProps) {
   >({});
   const [isConnecting, _setIsConnecting] = useState(false);
   const [isRevertingCheckpoint, setIsRevertingCheckpoint] = useState(false);
+  // Target of the "edit user message" dialog. Editing rolls the thread back to
+  // just before the message (with or without restoring files) and prefills the
+  // composer with the original text.
+  const [editMessageTarget, setEditMessageTarget] = useState<{
+    messageId: MessageId;
+    turnCount: number;
+    text: string;
+  } | null>(null);
+  // Turn count of the pending "Revert to checkpoint?" confirmation dialog.
+  const [revertConfirmTurnCount, setRevertConfirmTurnCount] = useState<number | null>(null);
   const [maximizedRightPanelThreadKey, setMaximizedRightPanelThreadKey] = useState<string | null>(
     null,
   );
@@ -3816,31 +3839,33 @@ function ChatViewContent(props: ChatViewProps) {
     composerRef,
   ]);
 
-  const onRevertToTurnCount = useCallback(
-    async (turnCount: number) => {
-      const localApi = readLocalApi();
-      if (!localApi || !activeThread || isRevertingCheckpoint) return;
+  // Reason the thread cannot be reverted right now, or null when allowed.
+  const checkpointRevertBlockedReason = useCallback((): string | null => {
+    if (activeEnvironmentUnavailable && activeEnvironmentUnavailableLabel) {
+      return `Reconnect ${activeEnvironmentUnavailableLabel} before reverting checkpoints.`;
+    }
+    if (phase === "running" || isSendBusy || isConnecting) {
+      return "Interrupt the current turn before reverting checkpoints.";
+    }
+    return null;
+  }, [
+    activeEnvironmentUnavailable,
+    activeEnvironmentUnavailableLabel,
+    isConnecting,
+    isSendBusy,
+    phase,
+  ]);
 
-      if (activeEnvironmentUnavailable && activeEnvironmentUnavailableLabel) {
-        setThreadError(
-          activeThread.id,
-          `Reconnect ${activeEnvironmentUnavailableLabel} before reverting checkpoints.`,
-        );
-        return;
-      }
-      if (phase === "running" || isSendBusy || isConnecting) {
-        setThreadError(activeThread.id, "Interrupt the current turn before reverting checkpoints.");
-        return;
-      }
-      const confirmed = await localApi.dialogs.confirm(
-        [
-          `Revert this thread to checkpoint ${turnCount}?`,
-          "This will discard newer messages and turn diffs in this thread.",
-          "This action cannot be undone.",
-        ].join("\n"),
-      );
-      if (!confirmed) {
-        return;
+  // Shared revert dispatcher used by the revert button (after its confirm
+  // dialog) and the edit-message flow (after the restore-files choice dialog).
+  // Returns true when the revert command was accepted.
+  const performCheckpointRevert = useCallback(
+    async (turnCount: number, options?: { restoreFiles?: boolean }): Promise<boolean> => {
+      if (!activeThread || isRevertingCheckpoint) return false;
+      const blockedReason = checkpointRevertBlockedReason();
+      if (blockedReason !== null) {
+        setThreadError(activeThread.id, blockedReason);
+        return false;
       }
 
       setIsRevertingCheckpoint(true);
@@ -3850,27 +3875,184 @@ function ChatViewContent(props: ChatViewProps) {
         input: {
           threadId: activeThread.id,
           turnCount,
+          ...(options?.restoreFiles !== undefined ? { restoreFiles: options.restoreFiles } : {}),
         },
       });
+      let accepted = true;
       if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
         const error = squashAtomCommandFailure(result);
         setThreadError(
           activeThread.id,
           error instanceof Error ? error.message : "Failed to revert thread state.",
         );
+        accepted = false;
       }
       setIsRevertingCheckpoint(false);
+      return accepted;
+    },
+    [
+      activeThread,
+      checkpointRevertBlockedReason,
+      environmentId,
+      isRevertingCheckpoint,
+      revertThreadCheckpoint,
+      setThreadError,
+    ],
+  );
+
+  // Opens the app-styled confirmation dialog instead of the browser confirm.
+  const onRevertToTurnCount = useCallback(
+    (turnCount: number) => {
+      if (!activeThread || isRevertingCheckpoint) return;
+
+      const blockedReason = checkpointRevertBlockedReason();
+      if (blockedReason !== null) {
+        setThreadError(activeThread.id, blockedReason);
+        return;
+      }
+      setRevertConfirmTurnCount(turnCount);
+    },
+    [activeThread, checkpointRevertBlockedReason, isRevertingCheckpoint, setThreadError],
+  );
+
+  const onConfirmRevert = useCallback(async () => {
+    const turnCount = revertConfirmTurnCount;
+    if (turnCount === null) return;
+    setRevertConfirmTurnCount(null);
+    await performCheckpointRevert(turnCount);
+  }, [performCheckpointRevert, revertConfirmTurnCount]);
+
+  // Undo the last revert: restores the stashed messages/turns (and files, if
+  // the revert restored files). Available until a new turn starts.
+  const onRedoCheckpoint = useCallback(async () => {
+    if (!activeThread || activeThread.redo === null || isRevertingCheckpoint) return;
+    const blockedReason = checkpointRevertBlockedReason();
+    if (blockedReason !== null) {
+      setThreadError(activeThread.id, blockedReason);
+      return;
+    }
+
+    setIsRevertingCheckpoint(true);
+    setThreadError(activeThread.id, null);
+    const result = await redoThreadCheckpoint({
+      environmentId,
+      input: { threadId: activeThread.id },
+    });
+    if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
+      const error = squashAtomCommandFailure(result);
+      setThreadError(
+        activeThread.id,
+        error instanceof Error ? error.message : "Failed to redo the revert.",
+      );
+    }
+    setIsRevertingCheckpoint(false);
+  }, [
+    activeThread,
+    checkpointRevertBlockedReason,
+    environmentId,
+    isRevertingCheckpoint,
+    redoThreadCheckpoint,
+    setThreadError,
+  ]);
+
+  // Banner offering to undo the most recent revert. Shown while the thread
+  // has a redo stash (cleared automatically when a new turn starts).
+  const redoBannerItem = useMemo<ComposerBannerStackItem | null>(() => {
+    if (!activeThread || activeThread.redo === null || !isServerThread) return null;
+    const redo = activeThread.redo;
+    return {
+      id: `checkpoint-redo:${activeThread.id}:${redo.revertedAt}`,
+      variant: "info",
+      icon: <Redo2Icon />,
+      title: "Thread reverted",
+      description: redo.filesRestored
+        ? "Messages and workspace files were rolled back to the checkpoint. Redo restores them until you send a new message."
+        : "Messages were rolled back to the checkpoint. Redo restores them until you send a new message.",
+      actions: (
+        <Button size="xs" disabled={isRevertingCheckpoint} onClick={() => void onRedoCheckpoint()}>
+          Redo
+        </Button>
+      ),
+    };
+  }, [activeThread, isRevertingCheckpoint, isServerThread, onRedoCheckpoint]);
+
+  const composerBannerItemsWithRedo = useMemo<ComposerBannerStackItem[]>(
+    () => (redoBannerItem ? [...composerBannerItems, redoBannerItem] : composerBannerItems),
+    [composerBannerItems, redoBannerItem],
+  );
+
+  // Edit flow: the user picked whether workspace files should be restored.
+  // Roll the thread back to just before the edited message, then prefill the
+  // composer with the original text so it can be adjusted and resent.
+  const onConfirmEditMessage = useCallback(
+    async (restoreFiles: boolean) => {
+      const target = editMessageTarget;
+      if (!target) return;
+      setEditMessageTarget(null);
+      const accepted = await performCheckpointRevert(target.turnCount, { restoreFiles });
+      if (!accepted) return;
+      composerRef.current?.insertTextAtEnd(target.text);
+      composerRef.current?.focusAtEnd();
+    },
+    [composerRef, editMessageTarget, performCheckpointRevert],
+  );
+
+  // Duplicate the conversation into a new thread ("branch"). When
+  // sourceMessageId is provided the copy stops at that assistant message;
+  // otherwise the whole conversation is copied.
+  const onBranchThread = useCallback(
+    async (sourceMessageId: MessageId | null) => {
+      if (!activeThread || !isServerThread || sendInFlightRef.current) return;
+      if (activeEnvironmentUnavailable && activeEnvironmentUnavailableLabel) {
+        setThreadError(
+          activeThread.id,
+          `Reconnect ${activeEnvironmentUnavailableLabel} before branching this chat.`,
+        );
+        return;
+      }
+
+      const nextThreadId = newThreadId();
+      const result = await branchThread({
+        environmentId,
+        input: {
+          sourceThreadId: activeThread.id,
+          ...(sourceMessageId !== null ? { sourceMessageId } : {}),
+          threadId: nextThreadId,
+        },
+      });
+      if (result._tag === "Failure") {
+        if (!isAtomCommandInterrupted(result)) {
+          const error = squashAtomCommandFailure(result);
+          setThreadError(
+            activeThread.id,
+            error instanceof Error ? error.message : "Failed to branch this chat.",
+          );
+        }
+        return;
+      }
+
+      // Wait for the new thread to reach the client store, then open it.
+      await settlePromise(() =>
+        waitForStartedServerThread(scopeThreadRef(activeThread.environmentId, nextThreadId)),
+      );
+      await settlePromise(() =>
+        navigate({
+          to: "/$environmentId/$threadId",
+          params: {
+            environmentId: activeThread.environmentId,
+            threadId: nextThreadId,
+          },
+        }),
+      );
     },
     [
       activeThread,
       activeEnvironmentUnavailable,
       activeEnvironmentUnavailableLabel,
+      branchThread,
       environmentId,
-      isConnecting,
-      isRevertingCheckpoint,
-      isSendBusy,
-      phase,
-      revertThreadCheckpoint,
+      isServerThread,
+      navigate,
       setThreadError,
     ],
   );
@@ -4908,6 +5090,20 @@ function ChatViewContent(props: ChatViewProps) {
     }
     void onRevertToTurnCountRef.current(targetTurnCount);
   }, []);
+  // Edit opens the restore-files choice dialog; branch duplicates the chat.
+  // Same ref pattern as revert to keep the callback identities stable.
+  const onEditUserMessage = useCallback((messageId: MessageId, text: string) => {
+    const targetTurnCount = revertTurnCountRef.current.get(messageId);
+    if (typeof targetTurnCount !== "number") {
+      return;
+    }
+    setEditMessageTarget({ messageId, turnCount: targetTurnCount, text });
+  }, []);
+  const onBranchThreadRef = useRef(onBranchThread);
+  onBranchThreadRef.current = onBranchThread;
+  const onBranchFromMessage = useCallback((messageId: MessageId) => {
+    void onBranchThreadRef.current(messageId);
+  }, []);
 
   // Empty state: no active thread
   if (!activeThread) {
@@ -5088,6 +5284,8 @@ function ChatViewContent(props: ChatViewProps) {
                 onOpenTurnDiff={onOpenTurnDiff}
                 revertTurnCountByUserMessageId={revertTurnCountByUserMessageId}
                 onRevertUserMessage={onRevertUserMessage}
+                onEditUserMessage={onEditUserMessage}
+                onBranchFromMessage={onBranchFromMessage}
                 isRevertingCheckpoint={isRevertingCheckpoint}
                 onImageExpand={onExpandTimelineImage}
                 markdownCwd={gitCwd ?? undefined}
@@ -5139,7 +5337,10 @@ function ChatViewContent(props: ChatViewProps) {
               </div>
               <div className="chat-composer-horizontal-inset">
                 <div className="pointer-events-auto relative z-10 isolate">
-                  <ComposerBannerStack className="relative z-0" items={composerBannerItems} />
+                  <ComposerBannerStack
+                    className="relative z-0"
+                    items={composerBannerItemsWithRedo}
+                  />
                   <div className="relative z-10">
                     <ChatComposer
                       composerRef={composerRef}
@@ -5357,6 +5558,69 @@ function ChatViewContent(props: ChatViewProps) {
           onClose={closeExpandedImage}
         />
       )}
+
+      {/* Edit message: choose whether the rollback also restores files. */}
+      <AlertDialog
+        open={editMessageTarget !== null}
+        onOpenChange={(open) => {
+          if (!open) setEditMessageTarget(null);
+        }}
+      >
+        <AlertDialogPopup>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Edit message?</AlertDialogTitle>
+            <AlertDialogDescription>
+              Editing removes this message and everything after it from the conversation, then puts
+              the original text back into the composer. You can also restore workspace files to the
+              checkpoint taken before this message.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogClose render={<Button type="button" variant="ghost" />}>
+              Cancel
+            </AlertDialogClose>
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => void onConfirmEditMessage(false)}
+            >
+              Keep files
+            </Button>
+            <Button type="button" onClick={() => void onConfirmEditMessage(true)}>
+              Restore files
+            </Button>
+          </AlertDialogFooter>
+        </AlertDialogPopup>
+      </AlertDialog>
+
+      {/* Revert to checkpoint: app-styled confirmation (no browser popup). */}
+      <AlertDialog
+        open={revertConfirmTurnCount !== null}
+        onOpenChange={(open) => {
+          if (!open) setRevertConfirmTurnCount(null);
+        }}
+      >
+        <AlertDialogPopup>
+          <AlertDialogHeader>
+            <AlertDialogTitle>
+              Revert to checkpoint {revertConfirmTurnCount ?? ""}?
+            </AlertDialogTitle>
+            <AlertDialogDescription>
+              This removes newer messages and turn diffs from this thread and restores workspace
+              files to the checkpoint. Staged changes are kept. You can redo the revert until you
+              send a new message.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogClose render={<Button type="button" variant="ghost" />}>
+              Cancel
+            </AlertDialogClose>
+            <Button type="button" onClick={() => void onConfirmRevert()}>
+              Revert
+            </Button>
+          </AlertDialogFooter>
+        </AlertDialogPopup>
+      </AlertDialog>
     </div>
   );
 }

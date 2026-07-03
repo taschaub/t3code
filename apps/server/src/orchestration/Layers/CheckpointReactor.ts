@@ -1,6 +1,5 @@
 import {
   CommandId,
-  type CheckpointRef,
   EventId,
   MessageId,
   type ProjectId,
@@ -18,6 +17,7 @@ import * as Option from "effect/Option";
 import type * as PlatformError from "effect/PlatformError";
 import * as Stream from "effect/Stream";
 import { makeDrainableWorker } from "@t3tools/shared/DrainableWorker";
+import { computeRedoStashForRevert } from "@t3tools/shared/threadRedo";
 
 import { parseTurnDiffFilesFromUnifiedDiff } from "../../checkpointing/Diffs.ts";
 import {
@@ -106,6 +106,38 @@ const make = Effect.gen(function* () {
             tone: "error",
             kind: "checkpoint.revert.failed",
             summary: "Checkpoint revert failed",
+            payload: {
+              turnCount: input.turnCount,
+              detail: input.detail,
+            },
+            turnId: null,
+            createdAt: input.createdAt,
+          },
+          createdAt: input.createdAt,
+        }),
+      ),
+    );
+
+  const appendRedoFailureActivity = (input: {
+    readonly threadId: ThreadId;
+    readonly turnCount: number;
+    readonly detail: string;
+    readonly createdAt: string;
+  }) =>
+    Effect.all({
+      commandId: serverCommandId("checkpoint-redo-failure"),
+      activityId: serverEventId,
+    }).pipe(
+      Effect.flatMap(({ commandId, activityId }) =>
+        orchestrationEngine.dispatch({
+          type: "thread.activity.append",
+          commandId,
+          threadId: input.threadId,
+          activity: {
+            id: activityId,
+            tone: "error",
+            kind: "checkpoint.redo.failed",
+            summary: "Checkpoint redo failed",
             payload: {
               turnCount: input.turnCount,
               detail: input.detail,
@@ -675,24 +707,30 @@ const make = Effect.gen(function* () {
       return;
     }
 
-    const restored = yield* checkpointStore.restoreCheckpoint({
-      cwd: sessionRuntime.value.cwd,
-      checkpointRef: targetCheckpointRef,
-      fallbackToHead: event.payload.turnCount === 0,
-    });
-    if (!restored) {
-      yield* appendRevertFailureActivity({
-        threadId: event.payload.threadId,
-        turnCount: event.payload.turnCount,
-        detail: `Filesystem checkpoint is unavailable for turn ${event.payload.turnCount}.`,
-        createdAt: now,
-      }).pipe(Effect.catch(() => Effect.void));
-      return;
-    }
+    // restoreFiles === false rolls back conversation state only: messages,
+    // provider history, and checkpoint summaries are reverted while the
+    // workspace files stay as they are ("edit without reverting files").
+    const restoreFiles = event.payload.restoreFiles !== false;
+    if (restoreFiles) {
+      const restored = yield* checkpointStore.restoreCheckpoint({
+        cwd: sessionRuntime.value.cwd,
+        checkpointRef: targetCheckpointRef,
+        fallbackToHead: event.payload.turnCount === 0,
+      });
+      if (!restored) {
+        yield* appendRevertFailureActivity({
+          threadId: event.payload.threadId,
+          turnCount: event.payload.turnCount,
+          detail: `Filesystem checkpoint is unavailable for turn ${event.payload.turnCount}.`,
+          createdAt: now,
+        }).pipe(Effect.catch(() => Effect.void));
+        return;
+      }
 
-    // Refresh the workspace entry index so the @-mention file picker
-    // reflects the reverted filesystem state.
-    yield* workspaceEntries.refresh(sessionRuntime.value.cwd);
+      // Refresh the workspace entry index so the @-mention file picker
+      // reflects the reverted filesystem state.
+      yield* workspaceEntries.refresh(sessionRuntime.value.cwd);
+    }
 
     const rolledBackTurns = Math.max(0, currentTurnCount - event.payload.turnCount);
     if (rolledBackTurns > 0) {
@@ -702,19 +740,16 @@ const make = Effect.gen(function* () {
       });
     }
 
-    const staleCheckpointRefs: Array<CheckpointRef> = [];
-    for (const checkpoint of thread.checkpoints) {
-      if (checkpoint.checkpointTurnCount > event.payload.turnCount) {
-        staleCheckpointRefs.push(checkpoint.checkpointRef);
-      }
-    }
-
-    if (staleCheckpointRefs.length > 0) {
-      yield* checkpointStore.deleteCheckpointRefs({
-        cwd: sessionRuntime.value.cwd,
-        checkpointRefs: staleCheckpointRefs,
-      });
-    }
+    // The checkpoint refs of the reverted turns are intentionally kept: they
+    // back the redo stash below. When the history diverges (a new turn
+    // starts), later captures overwrite them per turn count via update-ref;
+    // any refs beyond the new history stay as inert loose refs.
+    const redoStash = computeRedoStashForRevert({
+      thread,
+      turnCount: event.payload.turnCount,
+      filesRestored: restoreFiles,
+      revertedAt: now,
+    });
 
     yield* orchestrationEngine
       .dispatch({
@@ -722,6 +757,8 @@ const make = Effect.gen(function* () {
         commandId: yield* serverCommandId("checkpoint-revert-complete"),
         threadId: event.payload.threadId,
         turnCount: event.payload.turnCount,
+        restoreFiles,
+        redoStash,
         createdAt: now,
       })
       .pipe(
@@ -729,6 +766,87 @@ const make = Effect.gen(function* () {
           appendRevertFailureActivity({
             threadId: event.payload.threadId,
             turnCount: event.payload.turnCount,
+            detail: error.message,
+            createdAt: now,
+          }),
+        ),
+        Effect.asVoid,
+      );
+  });
+
+  // Undoes the most recent revert: restores the workspace files forward to
+  // the stashed turn's checkpoint ref (kept alive on revert exactly for this)
+  // and re-emits the stashed conversation slices via thread.redo.complete.
+  //
+  // Provider-side conversation state is not rolled forward — providers have
+  // no such API. For Cursor the underlying agent session never lost the
+  // turns (revert only trims local bookkeeping), so a redo actually re-aligns
+  // chat and agent. For Codex the agent's history stays truncated.
+  const handleRedoRequested = Effect.fn("handleRedoRequested")(function* (
+    event: Extract<OrchestrationEvent, { type: "thread.checkpoint-redo-requested" }>,
+  ) {
+    const now = DateTime.formatIso(yield* DateTime.now);
+    const redo = event.payload.redo;
+
+    if (redo.filesRestored) {
+      const sessionRuntime = yield* resolveSessionRuntimeForThread(event.payload.threadId);
+      if (Option.isNone(sessionRuntime)) {
+        yield* appendRedoFailureActivity({
+          threadId: event.payload.threadId,
+          turnCount: redo.turnCount,
+          detail: "No active provider session with workspace cwd is bound to this thread.",
+          createdAt: now,
+        }).pipe(Effect.catch(() => Effect.void));
+        return;
+      }
+      if (!isGitWorkspace(sessionRuntime.value.cwd)) {
+        yield* appendRedoFailureActivity({
+          threadId: event.payload.threadId,
+          turnCount: redo.turnCount,
+          detail: "Checkpoints are unavailable because this project is not a git repository.",
+          createdAt: now,
+        }).pipe(Effect.catch(() => Effect.void));
+        return;
+      }
+
+      const targetCheckpointRef =
+        redo.checkpoints.find((checkpoint) => checkpoint.checkpointTurnCount === redo.turnCount)
+          ?.checkpointRef ?? checkpointRefForThreadTurn(event.payload.threadId, redo.turnCount);
+      const restored = yield* checkpointStore.restoreCheckpoint({
+        cwd: sessionRuntime.value.cwd,
+        checkpointRef: targetCheckpointRef,
+        fallbackToHead: false,
+      });
+      if (!restored) {
+        yield* appendRedoFailureActivity({
+          threadId: event.payload.threadId,
+          turnCount: redo.turnCount,
+          detail: `Filesystem checkpoint is unavailable for turn ${redo.turnCount}.`,
+          createdAt: now,
+        }).pipe(Effect.catch(() => Effect.void));
+        return;
+      }
+      yield* workspaceEntries.refresh(sessionRuntime.value.cwd);
+    }
+
+    yield* orchestrationEngine
+      .dispatch({
+        type: "thread.redo.complete",
+        commandId: yield* serverCommandId("checkpoint-redo-complete"),
+        threadId: event.payload.threadId,
+        turnCount: redo.turnCount,
+        messages: redo.messages,
+        proposedPlans: redo.proposedPlans,
+        activities: redo.activities,
+        checkpoints: redo.checkpoints,
+        latestTurn: redo.latestTurn,
+        createdAt: now,
+      })
+      .pipe(
+        Effect.catch((error) =>
+          appendRedoFailureActivity({
+            threadId: event.payload.threadId,
+            turnCount: redo.turnCount,
             detail: error.message,
             createdAt: now,
           }),
@@ -750,6 +868,22 @@ const make = Effect.gen(function* () {
             appendRevertFailureActivity({
               threadId: event.payload.threadId,
               turnCount: event.payload.turnCount,
+              detail: error.message,
+              createdAt,
+            }),
+          ),
+        ),
+      );
+      return;
+    }
+
+    if (event.type === "thread.checkpoint-redo-requested") {
+      yield* handleRedoRequested(event).pipe(
+        Effect.catch((error) =>
+          Effect.flatMap(nowIso, (createdAt) =>
+            appendRedoFailureActivity({
+              threadId: event.payload.threadId,
+              turnCount: event.payload.redo.turnCount,
               detail: error.message,
               createdAt,
             }),
@@ -839,6 +973,7 @@ const make = Effect.gen(function* () {
           event.type !== "thread.turn-start-requested" &&
           event.type !== "thread.message-sent" &&
           event.type !== "thread.checkpoint-revert-requested" &&
+          event.type !== "thread.checkpoint-redo-requested" &&
           event.type !== "thread.turn-diff-completed"
         ) {
           return Effect.void;
