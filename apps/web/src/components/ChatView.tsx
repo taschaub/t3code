@@ -277,6 +277,8 @@ import {
   revokeUserMessagePreviewUrls,
   shouldWriteThreadErrorToCurrentServerThread,
   startNewThreadForProject,
+  threadTurnSettled,
+  waitForServerThread,
   waitForStartedServerThread,
 } from "./ChatView.logic";
 import type { ThreadSyncPhase } from "../threadSync";
@@ -4513,24 +4515,20 @@ function ChatViewContent(props: ChatViewProps) {
   ]);
 
   // Reason the thread cannot be reverted right now, or null when allowed.
+  // A running turn is NOT a blocker: the revert flow interrupts it first.
   const checkpointRevertBlockedReason = useCallback((): string | null => {
     if (activeEnvironmentUnavailable && activeEnvironmentUnavailableLabel) {
       return `Reconnect ${activeEnvironmentUnavailableLabel} before reverting checkpoints.`;
     }
-    if (phase === "running" || isSendBusy || isConnecting) {
-      return "Interrupt the current turn before reverting checkpoints.";
+    if (isSendBusy || isConnecting) {
+      return "Wait for the message to finish sending before reverting checkpoints.";
     }
     return null;
-  }, [
-    activeEnvironmentUnavailable,
-    activeEnvironmentUnavailableLabel,
-    isConnecting,
-    isSendBusy,
-    phase,
-  ]);
+  }, [activeEnvironmentUnavailable, activeEnvironmentUnavailableLabel, isConnecting, isSendBusy]);
 
   // Shared revert dispatcher used by the revert button (after its confirm
   // dialog) and the edit-message flow (after the restore-files choice dialog).
+  // A running turn is interrupted first (mirrors Cursor's edit-and-resend).
   // Returns true when the revert command was accepted.
   const performCheckpointRevert = useCallback(
     async (turnCount: number, options?: { restoreFiles?: boolean }): Promise<boolean> => {
@@ -4543,6 +4541,37 @@ function ChatViewContent(props: ChatViewProps) {
 
       setIsRevertingCheckpoint(true);
       setThreadError(activeThread.id, null);
+
+      if (phase === "running") {
+        const interruptResult = await interruptThreadTurn({
+          environmentId,
+          input: buildThreadTurnInterruptInput(activeThread),
+        });
+        if (interruptResult._tag === "Failure" && !isAtomCommandInterrupted(interruptResult)) {
+          const error = squashAtomCommandFailure(interruptResult);
+          setThreadError(
+            activeThread.id,
+            error instanceof Error ? error.message : "Failed to interrupt the current turn.",
+          );
+          setIsRevertingCheckpoint(false);
+          return false;
+        }
+        // Wait until the provider actually stopped so the checkpoint restore
+        // does not race file writes from the still-running turn.
+        const settled = await waitForServerThread(
+          scopeThreadRef(activeThread.environmentId, activeThread.id),
+          threadTurnSettled,
+          10_000,
+        );
+        if (!settled) {
+          setThreadError(
+            activeThread.id,
+            "The current turn did not stop in time. Try reverting again.",
+          );
+          setIsRevertingCheckpoint(false);
+          return false;
+        }
+      }
       const result = await revertThreadCheckpoint({
         environmentId,
         input: {
@@ -4567,7 +4596,9 @@ function ChatViewContent(props: ChatViewProps) {
       activeThread,
       checkpointRevertBlockedReason,
       environmentId,
+      interruptThreadTurn,
       isRevertingCheckpoint,
+      phase,
       revertThreadCheckpoint,
       setThreadError,
     ],
@@ -6382,6 +6413,7 @@ function ChatViewContent(props: ChatViewProps) {
               Editing removes this message and everything after it from the conversation, then puts
               the original text back into the composer. You can also restore workspace files to the
               checkpoint taken before this message.
+              {phase === "running" ? " The running turn will be interrupted first." : ""}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
@@ -6418,6 +6450,7 @@ function ChatViewContent(props: ChatViewProps) {
               This removes newer messages and turn diffs from this thread and restores workspace
               files to the checkpoint. Staged changes are kept. You can redo the revert until you
               send a new message.
+              {phase === "running" ? " The running turn will be interrupted first." : ""}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
