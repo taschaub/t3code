@@ -1088,6 +1088,7 @@ function makeThread(overrides: Partial<Thread> = {}): Thread {
     worktreePath: null,
     checkpoints: [],
     activities: [],
+    redo: null,
     ...overrides,
   };
 }

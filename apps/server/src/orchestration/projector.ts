@@ -8,6 +8,8 @@ import {
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 
+import { applyRedoSlices, computeRevertRetention } from "@t3tools/shared/threadRedo";
+
 import { toProjectorDecodeError, type OrchestrationProjectorDecodeError } from "./Errors.ts";
 import {
   MessageSentPayloadSchema,
@@ -28,8 +30,10 @@ import {
   ThreadUnsettledPayload,
   ThreadUnsnoozedPayload,
   ThreadRevertedPayload,
+  ThreadRedonePayload,
   ThreadSessionSetPayload,
   ThreadTurnDiffCompletedPayload,
+  ThreadTurnStartRequestedPayload,
 } from "./Schemas.ts";
 
 type ThreadPatch = Partial<Omit<OrchestrationThread, "id" | "projectId">>;
@@ -81,87 +85,6 @@ function decodeForEvent<A>(
 ): Effect.Effect<A, OrchestrationProjectorDecodeError> {
   return Schema.decodeUnknownEffect(schema)(value).pipe(
     Effect.mapError(toProjectorDecodeError(`${eventType}:${field}`)),
-  );
-}
-
-function retainThreadMessagesAfterRevert(
-  messages: ReadonlyArray<OrchestrationMessage>,
-  retainedTurnIds: ReadonlySet<string>,
-  turnCount: number,
-): ReadonlyArray<OrchestrationMessage> {
-  const retainedMessageIds = new Set<string>();
-  for (const message of messages) {
-    if (message.role === "system") {
-      retainedMessageIds.add(message.id);
-      continue;
-    }
-    if (message.turnId !== null && retainedTurnIds.has(message.turnId)) {
-      retainedMessageIds.add(message.id);
-    }
-  }
-
-  const retainedUserCount = messages.filter(
-    (message) => message.role === "user" && retainedMessageIds.has(message.id),
-  ).length;
-  const missingUserCount = Math.max(0, turnCount - retainedUserCount);
-  if (missingUserCount > 0) {
-    const fallbackUserMessages = messages
-      .filter(
-        (message) =>
-          message.role === "user" &&
-          !retainedMessageIds.has(message.id) &&
-          (message.turnId === null || retainedTurnIds.has(message.turnId)),
-      )
-      .toSorted(
-        (left, right) =>
-          left.createdAt.localeCompare(right.createdAt) || left.id.localeCompare(right.id),
-      )
-      .slice(0, missingUserCount);
-    for (const message of fallbackUserMessages) {
-      retainedMessageIds.add(message.id);
-    }
-  }
-
-  const retainedAssistantCount = messages.filter(
-    (message) => message.role === "assistant" && retainedMessageIds.has(message.id),
-  ).length;
-  const missingAssistantCount = Math.max(0, turnCount - retainedAssistantCount);
-  if (missingAssistantCount > 0) {
-    const fallbackAssistantMessages = messages
-      .filter(
-        (message) =>
-          message.role === "assistant" &&
-          !retainedMessageIds.has(message.id) &&
-          (message.turnId === null || retainedTurnIds.has(message.turnId)),
-      )
-      .toSorted(
-        (left, right) =>
-          left.createdAt.localeCompare(right.createdAt) || left.id.localeCompare(right.id),
-      )
-      .slice(0, missingAssistantCount);
-    for (const message of fallbackAssistantMessages) {
-      retainedMessageIds.add(message.id);
-    }
-  }
-
-  return messages.filter((message) => retainedMessageIds.has(message.id));
-}
-
-function retainThreadActivitiesAfterRevert(
-  activities: ReadonlyArray<OrchestrationThread["activities"][number]>,
-  retainedTurnIds: ReadonlySet<string>,
-): ReadonlyArray<OrchestrationThread["activities"][number]> {
-  return activities.filter(
-    (activity) => activity.turnId === null || retainedTurnIds.has(activity.turnId),
-  );
-}
-
-function retainThreadProposedPlansAfterRevert(
-  proposedPlans: ReadonlyArray<OrchestrationThread["proposedPlans"][number]>,
-  retainedTurnIds: ReadonlySet<string>,
-): ReadonlyArray<OrchestrationThread["proposedPlans"][number]> {
-  return proposedPlans.filter(
-    (proposedPlan) => proposedPlan.turnId === null || retainedTurnIds.has(proposedPlan.turnId),
   );
 }
 
@@ -675,21 +598,12 @@ export function projectEvent(
             return nextBase;
           }
 
-          const checkpoints = thread.checkpoints
-            .filter((entry) => entry.checkpointTurnCount <= payload.turnCount)
-            .toSorted((left, right) => left.checkpointTurnCount - right.checkpointTurnCount)
-            .slice(-MAX_THREAD_CHECKPOINTS);
-          const retainedTurnIds = new Set(checkpoints.map((checkpoint) => checkpoint.turnId));
-          const messages = retainThreadMessagesAfterRevert(
-            thread.messages,
-            retainedTurnIds,
-            payload.turnCount,
-          ).slice(-MAX_THREAD_MESSAGES);
-          const proposedPlans = retainThreadProposedPlansAfterRevert(
-            thread.proposedPlans,
-            retainedTurnIds,
-          ).slice(-200);
-          const activities = retainThreadActivitiesAfterRevert(thread.activities, retainedTurnIds);
+          // Same truncation the reactor uses when computing the redo stash.
+          const retained = computeRevertRetention(thread, payload.turnCount);
+          const checkpoints = retained.checkpoints.slice(-MAX_THREAD_CHECKPOINTS);
+          const messages = retained.messages.slice(-MAX_THREAD_MESSAGES);
+          const proposedPlans = retained.proposedPlans.slice(-200);
+          const activities = retained.activities;
 
           const latestCheckpoint = checkpoints.at(-1) ?? null;
           const latestTurn =
@@ -704,6 +618,11 @@ export function projectEvent(
                   assistantMessageId: latestCheckpoint.assistantMessageId,
                 };
 
+          // The stash of truncated content travels on the event (computed by
+          // the checkpoint reactor) so replays stay deterministic. Events
+          // persisted before redo support carry none — no redo then.
+          const redo = payload.redoStash ?? null;
+
           return {
             ...nextBase,
             threads: updateThread(nextBase.threads, payload.threadId, {
@@ -712,8 +631,70 @@ export function projectEvent(
               proposedPlans,
               activities,
               latestTurn,
+              redo,
               updatedAt: event.occurredAt,
             }),
+          };
+        }),
+      );
+
+    case "thread.redone":
+      return decodeForEvent(ThreadRedonePayload, event.payload, event.type, "payload").pipe(
+        Effect.map((payload) => {
+          const thread = nextBase.threads.find((entry) => entry.id === payload.threadId);
+          if (!thread) {
+            return nextBase;
+          }
+
+          // The restored slices travel on the event so replays reproduce the
+          // same state without needing the (transient) redo stash.
+          const restored = applyRedoSlices(
+            {
+              messages: thread.messages,
+              proposedPlans: thread.proposedPlans,
+              activities: thread.activities,
+              checkpoints: thread.checkpoints,
+            },
+            {
+              messages: payload.messages,
+              proposedPlans: payload.proposedPlans,
+              activities: payload.activities,
+              checkpoints: payload.checkpoints,
+            },
+          );
+
+          return {
+            ...nextBase,
+            threads: updateThread(nextBase.threads, payload.threadId, {
+              messages: restored.messages.slice(-MAX_THREAD_MESSAGES),
+              proposedPlans: restored.proposedPlans.slice(-200),
+              activities: restored.activities.slice(-500),
+              checkpoints: restored.checkpoints.slice(-MAX_THREAD_CHECKPOINTS),
+              latestTurn: payload.latestTurn,
+              redo: null,
+              updatedAt: event.occurredAt,
+            }),
+          };
+        }),
+      );
+
+    // A new turn diverges the history: the redo stash (and its checkpoint
+    // refs, which the next capture overwrites) can no longer be applied.
+    case "thread.turn-start-requested":
+      return decodeForEvent(
+        ThreadTurnStartRequestedPayload,
+        event.payload,
+        event.type,
+        "payload",
+      ).pipe(
+        Effect.map((payload) => {
+          const thread = nextBase.threads.find((entry) => entry.id === payload.threadId);
+          if (!thread || thread.redo === null) {
+            return nextBase;
+          }
+          return {
+            ...nextBase,
+            threads: updateThread(nextBase.threads, payload.threadId, { redo: null }),
           };
         }),
       );

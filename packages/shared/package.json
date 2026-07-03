@@ -95,6 +95,10 @@
       "types": "./src/orchestrationTiming.ts",
       "import": "./src/orchestrationTiming.ts"
     },
+    "./threadRedo": {
+      "types": "./src/threadRedo.ts",
+      "import": "./src/threadRedo.ts"
+    },
     "./remote": {
       "types": "./src/remote.ts",
       "import": "./src/remote.ts"

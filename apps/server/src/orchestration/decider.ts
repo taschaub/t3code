@@ -1,5 +1,6 @@
 import {
   EventId,
+  MessageId,
   type OrchestrationCommand,
   type OrchestrationEvent,
   type OrchestrationReadModel,
@@ -141,6 +142,20 @@ function threadHasQueuedTurnStart(
     Math.abs(queuedAgeMs) <= QUEUED_TURN_START_GRACE_MS
   );
 }
+
+// Copied activities must not look actionable in the branched thread: drop the
+// requestId so stale approval/user-input entries render as plain history.
+function sanitizeCopiedActivityPayload(payload: unknown): unknown {
+  if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
+    return payload;
+  }
+  const { requestId: _requestId, ...rest } = payload as Record<string, unknown>;
+  return rest;
+}
+
+// Caps for copied history, aligned with the projector's retention limits.
+const BRANCH_MAX_COPIED_MESSAGES = 2_000;
+const BRANCH_MAX_COPIED_ACTIVITIES = 500;
 
 function withEventBase(
   input: Pick<OrchestrationCommand, "commandId"> & {
@@ -376,6 +391,169 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
           updatedAt: command.createdAt,
         },
       };
+    }
+
+    case "thread.branch": {
+      const sourceThread = yield* requireThread({
+        readModel,
+        command,
+        threadId: command.sourceThreadId,
+      });
+      if (sourceThread.deletedAt !== null) {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: `Thread '${command.sourceThreadId}' is deleted and cannot be branched.`,
+        });
+      }
+      yield* requireProject({
+        readModel,
+        command,
+        projectId: sourceThread.projectId,
+      });
+      yield* requireThreadAbsent({
+        readModel,
+        command,
+        threadId: command.threadId,
+      });
+
+      const sourceMessageIndex =
+        command.sourceMessageId === undefined
+          ? -1
+          : sourceThread.messages.findIndex((message) => message.id === command.sourceMessageId);
+      if (command.sourceMessageId !== undefined && sourceMessageIndex === -1) {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: `Message '${command.sourceMessageId}' does not exist on source thread '${command.sourceThreadId}'.`,
+        });
+      }
+      const sourceMessage =
+        sourceMessageIndex >= 0 ? sourceThread.messages[sourceMessageIndex] : undefined;
+      if (sourceMessage !== undefined && sourceMessage.role !== "assistant") {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: `Message '${sourceMessage.id}' is not an assistant message and cannot be used as a branch point.`,
+        });
+      }
+      if (sourceMessage !== undefined && sourceMessage.streaming) {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: `Assistant message '${sourceMessage.id}' is still streaming and cannot be used as a branch point.`,
+        });
+      }
+
+      const threadCreatedEvent: PlannedOrchestrationEvent = {
+        ...(yield* withEventBase({
+          aggregateKind: "thread",
+          aggregateId: command.threadId,
+          occurredAt: command.createdAt,
+          commandId: command.commandId,
+        })),
+        type: "thread.created",
+        payload: {
+          threadId: command.threadId,
+          projectId: sourceThread.projectId,
+          title: command.title ?? `${sourceThread.title} (Branch)`,
+          modelSelection: sourceThread.modelSelection,
+          runtimeMode: sourceThread.runtimeMode,
+          interactionMode: sourceThread.interactionMode,
+          branch: sourceThread.branch,
+          worktreePath: sourceThread.worktreePath,
+          createdAt: command.createdAt,
+          updatedAt: command.createdAt,
+        },
+      };
+
+      // Copy messages up to and including the branch point (whole thread when
+      // no branch point was given), and the activities that belong to those
+      // turns. Copies get fresh ids and `turnId: null` — the new thread has no
+      // provider turns of its own yet — but keep their original timestamps so
+      // the timeline renders history in place.
+      const sourceMessages = (
+        sourceMessageIndex >= 0
+          ? sourceThread.messages.slice(0, sourceMessageIndex + 1)
+          : sourceThread.messages
+      )
+        .filter((message) => !message.streaming)
+        .slice(-BRANCH_MAX_COPIED_MESSAGES);
+      const includedTurnIds = new Set(
+        sourceMessages.flatMap((message) => (message.turnId === null ? [] : [message.turnId])),
+      );
+      const sourceActivities = (
+        sourceMessage === undefined
+          ? sourceThread.activities
+          : sourceThread.activities.filter((activity) => {
+              // Turn-linked activities follow their turn; unlinked ones are
+              // included when they happened before the branch point.
+              if (activity.turnId !== null) {
+                return includedTurnIds.has(activity.turnId);
+              }
+              return activity.createdAt <= sourceMessage.updatedAt;
+            })
+      ).slice(-BRANCH_MAX_COPIED_ACTIVITIES);
+
+      const copiedThreadEvents: PlannedOrchestrationEvent[] = [];
+      for (const message of sourceMessages) {
+        const eventBase = yield* withEventBase({
+          aggregateKind: "thread",
+          aggregateId: command.threadId,
+          occurredAt: command.createdAt,
+          commandId: command.commandId,
+        });
+        const copiedMessageId = yield* Crypto.Crypto.pipe(
+          Effect.flatMap((crypto) => crypto.randomUUIDv4),
+          Effect.map(MessageId.make),
+        );
+        copiedThreadEvents.push({
+          ...eventBase,
+          causationEventId: threadCreatedEvent.eventId,
+          type: "thread.message-sent",
+          payload: {
+            threadId: command.threadId,
+            messageId: copiedMessageId,
+            role: message.role,
+            text: message.text,
+            ...(message.attachments !== undefined ? { attachments: message.attachments } : {}),
+            turnId: null,
+            streaming: false,
+            createdAt: message.createdAt,
+            updatedAt: message.updatedAt,
+          },
+        });
+      }
+      for (const activity of sourceActivities) {
+        const eventBase = yield* withEventBase({
+          aggregateKind: "thread",
+          aggregateId: command.threadId,
+          occurredAt: command.createdAt,
+          commandId: command.commandId,
+        });
+        const copiedActivityId = yield* Crypto.Crypto.pipe(
+          Effect.flatMap((crypto) => crypto.randomUUIDv4),
+          Effect.map(EventId.make),
+        );
+        // Copies intentionally carry no `sequence`: session sequences restart
+        // in the branched thread's new provider session, so keeping the old
+        // numbers would interleave new activities into copied history.
+        copiedThreadEvents.push({
+          ...eventBase,
+          causationEventId: threadCreatedEvent.eventId,
+          type: "thread.activity-appended",
+          payload: {
+            threadId: command.threadId,
+            activity: {
+              id: copiedActivityId,
+              tone: activity.tone,
+              kind: activity.kind,
+              summary: activity.summary,
+              payload: sanitizeCopiedActivityPayload(activity.payload),
+              turnId: null,
+              createdAt: activity.createdAt,
+            },
+          },
+        });
+      }
+
+      return [threadCreatedEvent, ...copiedThreadEvents];
     }
 
     case "thread.delete": {
@@ -914,6 +1092,37 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
         payload: {
           threadId: command.threadId,
           turnCount: command.turnCount,
+          ...(command.restoreFiles !== undefined ? { restoreFiles: command.restoreFiles } : {}),
+          createdAt: command.createdAt,
+        },
+      };
+    }
+
+    case "thread.checkpoint.redo": {
+      const redoThread = yield* requireThread({
+        readModel,
+        command,
+        threadId: command.threadId,
+      });
+      // Redo is only valid while the stash from the last revert is alive
+      // (cleared as soon as a new turn diverges the history).
+      if (redoThread.redo === null) {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: `Thread '${command.threadId}' has no revert to redo.`,
+        });
+      }
+      return {
+        ...(yield* withEventBase({
+          aggregateKind: "thread",
+          aggregateId: command.threadId,
+          occurredAt: command.createdAt,
+          commandId: command.commandId,
+        })),
+        type: "thread.checkpoint-redo-requested",
+        payload: {
+          threadId: command.threadId,
+          redo: redoThread.redo,
           createdAt: command.createdAt,
         },
       };
@@ -1110,6 +1319,34 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
         payload: {
           threadId: command.threadId,
           turnCount: command.turnCount,
+          ...(command.restoreFiles !== undefined ? { restoreFiles: command.restoreFiles } : {}),
+          ...(command.redoStash !== undefined ? { redoStash: command.redoStash } : {}),
+        },
+      };
+    }
+
+    case "thread.redo.complete": {
+      yield* requireThread({
+        readModel,
+        command,
+        threadId: command.threadId,
+      });
+      return {
+        ...(yield* withEventBase({
+          aggregateKind: "thread",
+          aggregateId: command.threadId,
+          occurredAt: command.createdAt,
+          commandId: command.commandId,
+        })),
+        type: "thread.redone",
+        payload: {
+          threadId: command.threadId,
+          turnCount: command.turnCount,
+          messages: command.messages,
+          proposedPlans: command.proposedPlans,
+          activities: command.activities,
+          checkpoints: command.checkpoints,
+          latestTurn: command.latestTurn,
         },
       };
     }

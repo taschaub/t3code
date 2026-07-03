@@ -68,9 +68,12 @@ export class CheckpointStore extends Context.Service<
     ) => Effect.Effect<boolean, CheckpointStoreError>;
 
     /**
-     * Restore workspace and staging state to a checkpoint.
+     * Restore the working tree to a checkpoint.
      *
-     * Optionally falls back to current `HEAD` when the checkpoint ref is missing.
+     * Only unstaged state is touched: the index (staged changes) and HEAD are
+     * preserved, so staged work is never overwritten and no other commit is
+     * checked out. Optionally falls back to current `HEAD` when the checkpoint
+     * ref is missing.
      */
     readonly restoreCheckpoint: (
       input: RestoreCheckpointInput,
