@@ -12,12 +12,14 @@ import { useRouter } from "@tanstack/react-router";
 import { useCallback, useMemo, useRef } from "react";
 
 import { getFallbackThreadIdAfterDelete } from "../components/Sidebar.logic";
+import { waitForStartedServerThread } from "../components/ChatView.logic";
 import { useComposerDraftStore } from "../composerDraftStore";
 import { terminalEnvironment } from "../state/terminal";
 import { threadEnvironment } from "../state/threads";
 import { vcsEnvironment } from "../state/vcs";
 import { useNewThreadHandler } from "./useHandleNewThread";
 import { refreshArchivedThreadsForEnvironment } from "../lib/archivedThreadsState";
+import { newThreadId } from "../lib/utils";
 import { readLocalApi } from "../localApi";
 import { readEnvironmentThreadRefs, readProject, readThreadShell } from "../state/entities";
 import { useTerminalUiStateStore } from "../terminalUiStateStore";
@@ -48,6 +50,9 @@ export function useThreadActions() {
     reportFailure: false,
   });
   const deleteThreadMutation = useAtomCommand(threadEnvironment.delete, {
+    reportFailure: false,
+  });
+  const branchThreadMutation = useAtomCommand(threadEnvironment.branch, {
     reportFailure: false,
   });
   const stopThreadSession = useAtomCommand(threadEnvironment.stopSession);
@@ -345,6 +350,40 @@ export function useThreadActions() {
     ],
   );
 
+  // Duplicate a thread's whole conversation into a new independent thread
+  // ("branch") and navigate to it.
+  const branchThread = useCallback(
+    async (target: ScopedThreadRef) => {
+      const nextThreadId = newThreadId();
+      const result = await branchThreadMutation({
+        environmentId: target.environmentId,
+        input: {
+          sourceThreadId: target.threadId,
+          threadId: nextThreadId,
+        },
+      });
+      if (result._tag === "Failure") {
+        return result;
+      }
+
+      // Wait for the branched thread to land in the client store, then open it.
+      await settlePromise(() =>
+        waitForStartedServerThread(scopeThreadRef(target.environmentId, nextThreadId)),
+      );
+      const navigationResult = await settlePromise(() =>
+        router.navigate({
+          to: "/$environmentId/$threadId",
+          params: buildThreadRouteParams(scopeThreadRef(target.environmentId, nextThreadId)),
+        }),
+      );
+      if (navigationResult._tag === "Failure") {
+        return navigationResult;
+      }
+      return result;
+    },
+    [branchThreadMutation, router],
+  );
+
   const confirmAndDeleteThread = useCallback(
     async (target: ScopedThreadRef) => {
       const localApi = readLocalApi();
@@ -377,9 +416,10 @@ export function useThreadActions() {
     () => ({
       archiveThread,
       unarchiveThread,
+      branchThread,
       deleteThread,
       confirmAndDeleteThread,
     }),
-    [archiveThread, confirmAndDeleteThread, deleteThread, unarchiveThread],
+    [archiveThread, branchThread, confirmAndDeleteThread, deleteThread, unarchiveThread],
   );
 }

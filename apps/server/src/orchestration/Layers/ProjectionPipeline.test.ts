@@ -2398,6 +2398,221 @@ it.layer(BaseTestLayer)("OrchestrationProjectionPipeline", (it) => {
       ]);
     }),
   );
+
+  it.effect("persists the redo stash on revert and restores rows on redone", () =>
+    Effect.gen(function* () {
+      const projectionPipeline = yield* OrchestrationProjectionPipeline;
+      const eventStore = yield* OrchestrationEventStore;
+      const sql = yield* SqlClient.SqlClient;
+      const appendAndProject = (event: Parameters<typeof eventStore.append>[0]) =>
+        eventStore
+          .append(event)
+          .pipe(Effect.flatMap((savedEvent) => projectionPipeline.projectEvent(savedEvent)));
+
+      const threadId = ThreadId.make("thread-redo-sql");
+
+      yield* appendAndProject({
+        type: "project.created",
+        eventId: EventId.make("evt-redo-sql-1"),
+        aggregateKind: "project",
+        aggregateId: ProjectId.make("project-redo-sql"),
+        occurredAt: "2026-02-27T10:00:00.000Z",
+        commandId: CommandId.make("cmd-redo-sql-1"),
+        causationEventId: null,
+        correlationId: CorrelationId.make("cmd-redo-sql-1"),
+        metadata: {},
+        payload: {
+          projectId: ProjectId.make("project-redo-sql"),
+          title: "Project Redo",
+          workspaceRoot: "/tmp/project-redo-sql",
+          defaultModelSelection: null,
+          scripts: [],
+          createdAt: "2026-02-27T10:00:00.000Z",
+          updatedAt: "2026-02-27T10:00:00.000Z",
+        },
+      });
+
+      yield* appendAndProject({
+        type: "thread.created",
+        eventId: EventId.make("evt-redo-sql-2"),
+        aggregateKind: "thread",
+        aggregateId: threadId,
+        occurredAt: "2026-02-27T10:00:01.000Z",
+        commandId: CommandId.make("cmd-redo-sql-2"),
+        causationEventId: null,
+        correlationId: CorrelationId.make("cmd-redo-sql-2"),
+        metadata: {},
+        payload: {
+          threadId,
+          projectId: ProjectId.make("project-redo-sql"),
+          title: "Thread Redo",
+          modelSelection: {
+            instanceId: ProviderInstanceId.make("codex"),
+            model: "gpt-5-codex",
+          },
+          runtimeMode: "full-access",
+          branch: null,
+          worktreePath: null,
+          createdAt: "2026-02-27T10:00:01.000Z",
+          updatedAt: "2026-02-27T10:00:01.000Z",
+        },
+      });
+
+      yield* appendAndProject({
+        type: "thread.turn-diff-completed",
+        eventId: EventId.make("evt-redo-sql-3"),
+        aggregateKind: "thread",
+        aggregateId: threadId,
+        occurredAt: "2026-02-27T10:00:02.000Z",
+        commandId: CommandId.make("cmd-redo-sql-3"),
+        causationEventId: null,
+        correlationId: CorrelationId.make("cmd-redo-sql-3"),
+        metadata: {},
+        payload: {
+          threadId,
+          turnId: TurnId.make("turn-1"),
+          checkpointTurnCount: 1,
+          checkpointRef: CheckpointRef.make("refs/t3/checkpoints/thread-redo-sql/turn/1"),
+          status: "ready",
+          files: [],
+          assistantMessageId: MessageId.make("assistant-redo"),
+          completedAt: "2026-02-27T10:00:02.000Z",
+        },
+      });
+
+      yield* appendAndProject({
+        type: "thread.message-sent",
+        eventId: EventId.make("evt-redo-sql-4"),
+        aggregateKind: "thread",
+        aggregateId: threadId,
+        occurredAt: "2026-02-27T10:00:02.100Z",
+        commandId: CommandId.make("cmd-redo-sql-4"),
+        causationEventId: null,
+        correlationId: CorrelationId.make("cmd-redo-sql-4"),
+        metadata: {},
+        payload: {
+          threadId,
+          messageId: MessageId.make("assistant-redo"),
+          role: "assistant",
+          text: "will be reverted",
+          turnId: TurnId.make("turn-1"),
+          streaming: false,
+          createdAt: "2026-02-27T10:00:02.100Z",
+          updatedAt: "2026-02-27T10:00:02.100Z",
+        },
+      });
+
+      // The slices the reactor would stash when reverting to turn 0.
+      const stashedMessage = {
+        id: MessageId.make("assistant-redo"),
+        role: "assistant" as const,
+        text: "will be reverted",
+        turnId: TurnId.make("turn-1"),
+        streaming: false,
+        createdAt: "2026-02-27T10:00:02.100Z",
+        updatedAt: "2026-02-27T10:00:02.100Z",
+      };
+      const stashedCheckpoint = {
+        turnId: TurnId.make("turn-1"),
+        checkpointTurnCount: 1,
+        checkpointRef: CheckpointRef.make("refs/t3/checkpoints/thread-redo-sql/turn/1"),
+        status: "ready" as const,
+        files: [],
+        assistantMessageId: MessageId.make("assistant-redo"),
+        completedAt: "2026-02-27T10:00:02.000Z",
+      };
+      const stashedLatestTurn = {
+        turnId: TurnId.make("turn-1"),
+        state: "completed" as const,
+        requestedAt: "2026-02-27T10:00:02.000Z",
+        startedAt: "2026-02-27T10:00:02.000Z",
+        completedAt: "2026-02-27T10:00:02.000Z",
+        assistantMessageId: MessageId.make("assistant-redo"),
+      };
+
+      yield* appendAndProject({
+        type: "thread.reverted",
+        eventId: EventId.make("evt-redo-sql-5"),
+        aggregateKind: "thread",
+        aggregateId: threadId,
+        occurredAt: "2026-02-27T10:00:03.000Z",
+        commandId: CommandId.make("cmd-redo-sql-5"),
+        causationEventId: null,
+        correlationId: CorrelationId.make("cmd-redo-sql-5"),
+        metadata: {},
+        payload: {
+          threadId,
+          turnCount: 0,
+          redoStash: {
+            turnCount: 1,
+            filesRestored: true,
+            messages: [stashedMessage],
+            proposedPlans: [],
+            activities: [],
+            checkpoints: [stashedCheckpoint],
+            latestTurn: stashedLatestTurn,
+            revertedAt: "2026-02-27T10:00:03.000Z",
+          },
+        },
+      });
+
+      // The stash is persisted so redo survives server restarts…
+      const revertedRows = yield* sql<{ readonly redoJson: string | null }>`
+        SELECT redo_json AS "redoJson"
+        FROM projection_threads
+        WHERE thread_id = 'thread-redo-sql'
+      `;
+      assert.isNotNull(revertedRows[0]?.redoJson);
+      // …and the reverted message rows are gone.
+      const prunedMessages = yield* sql<{ readonly messageId: string }>`
+        SELECT message_id AS "messageId"
+        FROM projection_thread_messages
+        WHERE thread_id = 'thread-redo-sql'
+      `;
+      assert.deepEqual(prunedMessages, []);
+
+      yield* appendAndProject({
+        type: "thread.redone",
+        eventId: EventId.make("evt-redo-sql-6"),
+        aggregateKind: "thread",
+        aggregateId: threadId,
+        occurredAt: "2026-02-27T10:00:04.000Z",
+        commandId: CommandId.make("cmd-redo-sql-6"),
+        causationEventId: null,
+        correlationId: CorrelationId.make("cmd-redo-sql-6"),
+        metadata: {},
+        payload: {
+          threadId,
+          turnCount: 1,
+          messages: [stashedMessage],
+          proposedPlans: [],
+          activities: [],
+          checkpoints: [stashedCheckpoint],
+          latestTurn: stashedLatestTurn,
+        },
+      });
+
+      // Redone restores the rows and consumes the stash.
+      const restoredMessages = yield* sql<{ readonly messageId: string }>`
+        SELECT message_id AS "messageId"
+        FROM projection_thread_messages
+        WHERE thread_id = 'thread-redo-sql'
+      `;
+      assert.deepEqual(restoredMessages, [{ messageId: "assistant-redo" }]);
+      const restoredCheckpoints = yield* sql<{ readonly turnId: string }>`
+        SELECT turn_id AS "turnId"
+        FROM projection_turns
+        WHERE thread_id = 'thread-redo-sql' AND checkpoint_ref IS NOT NULL
+      `;
+      assert.deepEqual(restoredCheckpoints, [{ turnId: "turn-1" }]);
+      const redoneRows = yield* sql<{ readonly redoJson: string | null }>`
+        SELECT redo_json AS "redoJson"
+        FROM projection_threads
+        WHERE thread_id = 'thread-redo-sql'
+      `;
+      assert.isNull(redoneRows[0]?.redoJson);
+    }),
+  );
 });
 
 it.effect("restores pending turn-start metadata across projection pipeline restart", () =>

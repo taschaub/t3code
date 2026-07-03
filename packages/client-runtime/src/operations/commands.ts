@@ -32,6 +32,7 @@ export type CreateProjectInput = CommandInput<"project.create">;
 export type UpdateProjectInput = CommandInput<"project.meta.update">;
 export type DeleteProjectInput = CommandInput<"project.delete">;
 export type CreateThreadInput = CommandInput<"thread.create">;
+export type BranchThreadInput = CommandInput<"thread.branch">;
 export type DeleteThreadInput = CommandInput<"thread.delete">;
 export type ArchiveThreadInput = CommandInput<"thread.archive">;
 export type UnarchiveThreadInput = CommandInput<"thread.unarchive">;
@@ -43,6 +44,7 @@ export type InterruptThreadTurnInput = CommandInput<"thread.turn.interrupt">;
 export type RespondToThreadApprovalInput = CommandInput<"thread.approval.respond">;
 export type RespondToThreadUserInputInput = CommandInput<"thread.user-input.respond">;
 export type RevertThreadCheckpointInput = CommandInput<"thread.checkpoint.revert">;
+export type RedoThreadCheckpointInput = CommandInput<"thread.checkpoint.redo">;
 export type StopThreadSessionInput = CommandInput<"thread.session.stop">;
 
 type DispatchTag = typeof ORCHESTRATION_WS_METHODS.dispatchCommand;
@@ -118,6 +120,18 @@ export const createThread: (input: CreateThreadInput) => CommandEffect = Effect.
   return yield* dispatch({
     ...input,
     type: "thread.create",
+    commandId: metadata.commandId,
+    createdAt: metadata.createdAt,
+  });
+});
+
+export const branchThread: (input: BranchThreadInput) => CommandEffect = Effect.fn(
+  "EnvironmentCommands.branchThread",
+)(function* (input) {
+  const metadata = yield* timestampedCommandMetadata(input);
+  return yield* dispatch({
+    ...input,
+    type: "thread.branch",
     commandId: metadata.commandId,
     createdAt: metadata.createdAt,
   });
@@ -242,6 +256,18 @@ export const revertThreadCheckpoint: (input: RevertThreadCheckpointInput) => Com
       createdAt: metadata.createdAt,
     });
   });
+
+export const redoThreadCheckpoint: (input: RedoThreadCheckpointInput) => CommandEffect = Effect.fn(
+  "EnvironmentCommands.redoThreadCheckpoint",
+)(function* (input) {
+  const metadata = yield* timestampedCommandMetadata(input);
+  return yield* dispatch({
+    ...input,
+    type: "thread.checkpoint.redo",
+    commandId: metadata.commandId,
+    createdAt: metadata.createdAt,
+  });
+});
 
 export const stopThreadSession: (input: StopThreadSessionInput) => CommandEffect = Effect.fn(
   "EnvironmentCommands.stopThreadSession",

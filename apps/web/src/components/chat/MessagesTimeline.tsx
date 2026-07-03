@@ -46,11 +46,13 @@ import {
   ChevronRightIcon,
   CircleAlertIcon,
   EyeIcon,
+  GitBranchIcon,
   GlobeIcon,
   HammerIcon,
   MessageCircleIcon,
   MousePointerClickIcon,
   PaintbrushIcon,
+  PencilIcon,
   MinusIcon,
   SquarePenIcon,
   TerminalIcon,
@@ -130,6 +132,8 @@ interface TimelineRowSharedState {
   skills: ReadonlyArray<Pick<ServerProviderSkill, "name" | "displayName">>;
   activeThreadEnvironmentId: EnvironmentId;
   onRevertUserMessage: (messageId: MessageId) => void;
+  onEditUserMessage: (messageId: MessageId, text: string) => void;
+  onBranchFromMessage: (messageId: MessageId) => void;
   onImageExpand: (preview: ExpandedImagePreview) => void;
   onOpenTurnDiff: (turnId: TurnId, filePath?: string) => void;
   onToggleTurnFold: (turnId: TurnId) => void;
@@ -165,6 +169,8 @@ interface MessagesTimelineProps {
   onOpenTurnDiff: (turnId: TurnId, filePath?: string) => void;
   revertTurnCountByUserMessageId: Map<MessageId, number>;
   onRevertUserMessage: (messageId: MessageId) => void;
+  onEditUserMessage: (messageId: MessageId, text: string) => void;
+  onBranchFromMessage: (messageId: MessageId) => void;
   isRevertingCheckpoint: boolean;
   onImageExpand: (preview: ExpandedImagePreview) => void;
   activeThreadEnvironmentId: EnvironmentId;
@@ -198,6 +204,8 @@ export const MessagesTimeline = memo(function MessagesTimeline({
   onOpenTurnDiff,
   revertTurnCountByUserMessageId,
   onRevertUserMessage,
+  onEditUserMessage,
+  onBranchFromMessage,
   isRevertingCheckpoint,
   onImageExpand,
   activeThreadEnvironmentId,
@@ -417,6 +425,8 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       skills,
       activeThreadEnvironmentId,
       onRevertUserMessage,
+      onEditUserMessage,
+      onBranchFromMessage,
       onImageExpand,
       onOpenTurnDiff,
       onToggleTurnFold,
@@ -431,6 +441,8 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       skills,
       activeThreadEnvironmentId,
       onRevertUserMessage,
+      onEditUserMessage,
+      onBranchFromMessage,
       onImageExpand,
       onOpenTurnDiff,
       onToggleTurnFold,
@@ -918,6 +930,12 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
             </TooltipPopup>
           </Tooltip>
           <div className="flex items-center gap-0.5">
+            {canRevertAgentWork && (
+              <EditUserMessageButton
+                messageId={row.message.id}
+                text={displayedUserMessage.copyText || visibleText}
+              />
+            )}
             {canRevertAgentWork && <RevertUserMessageButton messageId={row.message.id} />}
             {displayedUserMessage.copyText && (
               <MessageCopyButton text={displayedUserMessage.copyText} variant="ghost" />
@@ -929,6 +947,9 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
   );
 }
 
+// Revert/Edit/Branch stay clickable while a turn is running: reverting or
+// editing interrupts the active turn first (handled in ChatView), and
+// branching copies only settled history so it is always safe.
 function RevertUserMessageButton({ messageId }: { messageId: MessageId }) {
   const ctx = use(TimelineRowCtx);
   const activity = use(TimelineRowActivityCtx);
@@ -941,7 +962,7 @@ function RevertUserMessageButton({ messageId }: { messageId: MessageId }) {
             type="button"
             size="xs"
             variant="ghost"
-            disabled={activity.isRevertingCheckpoint || activity.isWorking}
+            disabled={activity.isRevertingCheckpoint}
             onClick={() => ctx.onRevertUserMessage(messageId)}
             aria-label="Revert to this message"
           />
@@ -950,6 +971,61 @@ function RevertUserMessageButton({ messageId }: { messageId: MessageId }) {
         <Undo2Icon className="size-3" />
       </TooltipTrigger>
       <TooltipPopup side="top">Revert to this message</TooltipPopup>
+    </Tooltip>
+  );
+}
+
+// Edit reuses the revert machinery: it rolls the conversation back to just
+// before this message (optionally keeping workspace files) and prefills the
+// composer with the message text so the user can adjust and resend.
+function EditUserMessageButton({ messageId, text }: { messageId: MessageId; text: string }) {
+  const ctx = use(TimelineRowCtx);
+  const activity = use(TimelineRowActivityCtx);
+
+  return (
+    <Tooltip>
+      <TooltipTrigger
+        render={
+          <Button
+            type="button"
+            size="xs"
+            variant="ghost"
+            disabled={activity.isRevertingCheckpoint}
+            onClick={() => ctx.onEditUserMessage(messageId, text)}
+            aria-label="Edit message and resend"
+          />
+        }
+      >
+        <PencilIcon className="size-3" />
+      </TooltipTrigger>
+      <TooltipPopup side="top">Edit message</TooltipPopup>
+    </Tooltip>
+  );
+}
+
+// Branches the conversation into a new thread that contains history up to and
+// including this assistant message.
+function BranchFromMessageButton({ messageId }: { messageId: MessageId }) {
+  const ctx = use(TimelineRowCtx);
+  const activity = use(TimelineRowActivityCtx);
+
+  return (
+    <Tooltip>
+      <TooltipTrigger
+        render={
+          <Button
+            type="button"
+            size="xs"
+            variant="ghost"
+            disabled={activity.isRevertingCheckpoint}
+            onClick={() => ctx.onBranchFromMessage(messageId)}
+            aria-label="Branch chat from here"
+          />
+        }
+      >
+        <GitBranchIcon className="size-3" />
+      </TooltipTrigger>
+      <TooltipPopup side="top">Branch chat from here</TooltipPopup>
     </Tooltip>
   );
 }
@@ -997,6 +1073,7 @@ function AssistantTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "mess
         {row.showAssistantMeta ? (
           <div className="mt-1.5 flex items-center gap-2 text-xs tabular-nums opacity-0 transition-opacity duration-200 focus-within:opacity-100 group-hover/assistant:opacity-100">
             <AssistantCopyButton row={row} />
+            {!row.message.streaming && <BranchFromMessageButton messageId={row.message.id} />}
             {!row.message.streaming && (
               <Tooltip>
                 <TooltipTrigger

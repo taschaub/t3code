@@ -362,6 +362,7 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
             lastError: null,
             updatedAt: "2026-02-24T00:00:07.000Z",
           },
+          redo: null,
         },
       ]);
 
@@ -439,6 +440,12 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
       if (threadDetail._tag === "Some") {
         assert.deepEqual(threadDetail.value, snapshot.threads[0]);
       }
+
+      // The decider's command read model must hydrate threads just as deeply
+      // as the snapshot (messages, checkpoints, activities, redo): branching
+      // and redo validation depend on this after a server restart.
+      const commandReadModel = yield* snapshotQuery.getCommandReadModel();
+      assert.deepEqual(commandReadModel.threads, snapshot.threads);
     }),
   );
 

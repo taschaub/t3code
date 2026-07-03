@@ -52,6 +52,7 @@ export function buildLocalDraftThread(
     checkpoints: [],
     activities: [],
     proposedPlans: [],
+    redo: null,
   };
 }
 
@@ -339,15 +340,17 @@ export function getStartedThreadModelChangeBlockReason(input: {
   };
 }
 
-export async function waitForStartedServerThread(
+// Resolves true once the thread in the client store matches the predicate,
+// or false when it does not within timeoutMs.
+export async function waitForServerThread(
   threadRef: ScopedThreadRef,
+  predicate: (thread: Thread | null | undefined) => boolean,
   timeoutMs = 1_000,
 ): Promise<boolean> {
   const threadAtom = environmentThreadDetails.detailAtom(threadRef);
   const getThread = () => appAtomRegistry.get(threadAtom);
-  const thread = getThread();
 
-  if (threadHasStarted(thread)) {
+  if (predicate(getThread())) {
     return true;
   }
 
@@ -367,13 +370,13 @@ export async function waitForStartedServerThread(
     };
 
     const unsubscribe = appAtomRegistry.subscribe(threadAtom, (thread) => {
-      if (!threadHasStarted(thread)) {
+      if (!predicate(thread)) {
         return;
       }
       finish(true);
     });
 
-    if (threadHasStarted(getThread())) {
+    if (predicate(getThread())) {
       finish(true);
       return;
     }
@@ -382,6 +385,19 @@ export async function waitForStartedServerThread(
       finish(false);
     }, timeoutMs);
   });
+}
+
+export async function waitForStartedServerThread(
+  threadRef: ScopedThreadRef,
+  timeoutMs = 1_000,
+): Promise<boolean> {
+  return await waitForServerThread(threadRef, threadHasStarted, timeoutMs);
+}
+
+// True once the thread has no actively running provider turn. Used after an
+// interrupt to wait until it is safe to revert/edit history.
+export function threadTurnSettled(thread: Thread | null | undefined): boolean {
+  return !thread || thread.session === null || thread.session.status !== "running";
 }
 
 export interface LocalDispatchSnapshot {
