@@ -26,6 +26,11 @@ import * as Stream from "effect/Stream";
 import { makeDrainableWorker } from "@t3tools/shared/DrainableWorker";
 
 import { resolveThreadWorkspaceCwd } from "../../checkpointing/Utils.ts";
+import {
+  buildBranchContextPrefix,
+  composeBranchedFirstTurnInput,
+  isBranchedThreadAwaitingFirstTurn,
+} from "../branchTranscript.ts";
 import { increment, orchestrationEventsProcessedTotal } from "../../observability/Metrics.ts";
 import { ProviderAdapterRequestError } from "../../provider/Errors.ts";
 import type { ProviderServiceError } from "../../provider/Errors.ts";
@@ -1096,9 +1101,24 @@ const make = Effect.gen(function* () {
         ),
       );
 
+    // First provider turn of a branched thread: the provider session is brand
+    // new and has never seen the copied history, so prepend a transcript of it
+    // to the prompt. The stored user message stays clean — only the provider
+    // input is decorated.
+    const branchContextPrefix = isBranchedThreadAwaitingFirstTurn(thread)
+      ? buildBranchContextPrefix({
+          messages: thread.messages,
+          currentMessageId: message.id,
+        })
+      : null;
+    const providerMessageText =
+      branchContextPrefix !== null
+        ? composeBranchedFirstTurnInput(branchContextPrefix, message.text)
+        : message.text;
+
     const sendTurnRequest = yield* buildSendTurnRequestForThread({
       threadId: event.payload.threadId,
-      messageText: message.text,
+      messageText: providerMessageText,
       ...(message.attachments !== undefined ? { attachments: message.attachments } : {}),
       ...(event.payload.modelSelection !== undefined
         ? { modelSelection: event.payload.modelSelection }

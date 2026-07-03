@@ -270,6 +270,9 @@ export class GitVcsDriver extends Context.Service<
 const WORKSPACE_FILES_MAX_OUTPUT_BYTES = 16 * 1024 * 1024;
 const GIT_CHECK_IGNORE_MAX_STDIN_BYTES = 256 * 1024;
 const CHECKPOINT_DIFF_MAX_OUTPUT_BYTES = 10_000_000;
+// Path listings during checkpoint restore (ls-files / ls-tree). Sized like the
+// workspace file listing cap; a truncated listing disables untracked cleanup.
+const CHECKPOINT_PATH_LISTING_MAX_OUTPUT_BYTES = WORKSPACE_FILES_MAX_OUTPUT_BYTES;
 const WORKSPACE_GIT_HARDENED_CONFIG_ARGS = [
   "-c",
   "core.fsmonitor=false",
@@ -747,23 +750,56 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
         return false;
       }
 
+      // Restore the working tree only. The index (staged changes) and HEAD are
+      // deliberately left untouched: reverting must never overwrite what the
+      // user staged and must never check out a different commit. Staged
+      // changes keep showing as staged; the revert shows up as unstaged edits
+      // on top, so re-staging everything reproduces the checkpoint tree
+      // exactly. Files tracked in the index but absent from the checkpoint are
+      // removed from the working tree by `git restore` itself.
       yield* execute({
         operation,
         cwd: input.cwd,
-        args: ["restore", "--source", commitOid, "--worktree", "--staged", "--", "."],
-      });
-      yield* execute({
-        operation,
-        cwd: input.cwd,
-        args: ["clean", "-fd", "--", "."],
+        args: ["restore", "--source", commitOid, "--worktree", "--", "."],
       });
 
-      const headExists = yield* hasHeadCommit(input.cwd);
-      if (headExists) {
+      // Untracked files created after the checkpoint must be deleted manually.
+      // A blanket `git clean -fd` would also delete files that were untracked
+      // at capture time: those are part of the checkpoint tree but stay
+      // untracked after a worktree-only restore. Compute the precise set
+      // instead: untracked, non-ignored files that are not in the checkpoint.
+      const untrackedResult = yield* execute({
+        operation,
+        cwd: input.cwd,
+        args: ["ls-files", "--others", "--exclude-standard", "-z"],
+        maxOutputBytes: CHECKPOINT_PATH_LISTING_MAX_OUTPUT_BYTES,
+      });
+      const checkpointTreeResult = yield* execute({
+        operation,
+        cwd: input.cwd,
+        args: ["ls-tree", "-r", "--name-only", "-z", commitOid],
+        maxOutputBytes: CHECKPOINT_PATH_LISTING_MAX_OUTPUT_BYTES,
+      });
+      // Truncated listings would make the "not in checkpoint" filter unsafe
+      // (checkpoint files could get deleted). Leaving stray untracked files
+      // behind is harmless by comparison, so skip cleaning in that case.
+      if (untrackedResult.stdoutTruncated || checkpointTreeResult.stdoutTruncated) {
+        yield* Effect.logWarning(
+          "restoreCheckpoint skipped untracked-file cleanup: path listing exceeded output limit",
+          { cwd: input.cwd },
+        );
+        return true;
+      }
+      const checkpointPaths = new Set(splitNullSeparatedPaths(checkpointTreeResult.stdout, false));
+      const pathsToDelete = splitNullSeparatedPaths(untrackedResult.stdout, false).filter(
+        (entryPath) => !checkpointPaths.has(entryPath),
+      );
+      // git clean accepts explicit pathspecs; chunk to stay within argv limits.
+      for (let index = 0; index < pathsToDelete.length; index += 128) {
         yield* execute({
           operation,
           cwd: input.cwd,
-          args: ["reset", "--quiet", "--", "."],
+          args: ["clean", "-fd", "--", ...pathsToDelete.slice(index, index + 128)],
         });
       }
 

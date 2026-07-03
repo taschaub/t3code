@@ -4,9 +4,11 @@ import { Atom } from "effect/unstable/reactivity";
 import { createAtomCommandScheduler, createEnvironmentCommand } from "./runtime.ts";
 import {
   type ArchiveThreadInput,
+  type BranchThreadInput,
   type CreateThreadInput,
   type DeleteThreadInput,
   type InterruptThreadTurnInput,
+  type RedoThreadCheckpointInput,
   type RespondToThreadApprovalInput,
   type RespondToThreadUserInputInput,
   type RevertThreadCheckpointInput,
@@ -21,9 +23,11 @@ import {
   type UnsnoozeThreadInput,
   type UpdateThreadMetadataInput,
   archiveThread,
+  branchThread,
   createThread,
   deleteThread,
   interruptThreadTurn,
+  redoThreadCheckpoint,
   respondToThreadApproval,
   respondToThreadUserInput,
   revertThreadCheckpoint,
@@ -42,9 +46,11 @@ import type { EnvironmentRegistry } from "../connection/registry.ts";
 
 export type {
   ArchiveThreadInput,
+  BranchThreadInput,
   CreateThreadInput,
   DeleteThreadInput,
   InterruptThreadTurnInput,
+  RedoThreadCheckpointInput,
   RespondToThreadApprovalInput,
   RespondToThreadUserInputInput,
   RevertThreadCheckpointInput,
@@ -73,6 +79,12 @@ export function createThreadEnvironmentAtoms<R, E>(
     create: createEnvironmentCommand(runtime, {
       label: "environment-data:commands:thread:create",
       execute: (input: CreateThreadInput) => createThread(input),
+      scheduler,
+      concurrency,
+    }),
+    branch: createEnvironmentCommand(runtime, {
+      label: "environment-data:commands:thread:branch",
+      execute: (input: BranchThreadInput) => branchThread(input),
       scheduler,
       concurrency,
     }),
@@ -163,6 +175,12 @@ export function createThreadEnvironmentAtoms<R, E>(
     revertCheckpoint: createEnvironmentCommand(runtime, {
       label: "environment-data:commands:thread:revert-checkpoint",
       execute: (input: RevertThreadCheckpointInput) => revertThreadCheckpoint(input),
+      scheduler,
+      concurrency,
+    }),
+    redoCheckpoint: createEnvironmentCommand(runtime, {
+      label: "environment-data:commands:thread:redo-checkpoint",
+      execute: (input: RedoThreadCheckpointInput) => redoThreadCheckpoint(input),
       scheduler,
       concurrency,
     }),

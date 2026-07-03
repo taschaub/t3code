@@ -349,6 +349,26 @@ export const ThreadTitleRegeneration = Schema.Struct({
 });
 export type ThreadTitleRegeneration = typeof ThreadTitleRegeneration.Type;
 
+/**
+ * Conversation content removed by the most recent checkpoint revert, kept so
+ * the revert can be undone ("redo"). Cleared as soon as the thread diverges
+ * (a new turn starts). The checkpoint git refs for the stashed turns stay
+ * alive on disk for the same window, so redo can also restore files.
+ */
+export const OrchestrationThreadRedoState = Schema.Struct({
+  /** Turn count the thread had before the revert; redo restores back to it. */
+  turnCount: NonNegativeInt,
+  /** Whether the revert restored workspace files. Redo mirrors this choice. */
+  filesRestored: Schema.Boolean,
+  messages: Schema.Array(OrchestrationMessage),
+  proposedPlans: Schema.Array(OrchestrationProposedPlan),
+  activities: Schema.Array(OrchestrationThreadActivity),
+  checkpoints: Schema.Array(OrchestrationCheckpointSummary),
+  latestTurn: Schema.NullOr(OrchestrationLatestTurn),
+  revertedAt: IsoDateTime,
+});
+export type OrchestrationThreadRedoState = typeof OrchestrationThreadRedoState.Type;
+
 export const OrchestrationThread = Schema.Struct({
   id: ThreadId,
   projectId: ProjectId,
@@ -384,6 +404,9 @@ export const OrchestrationThread = Schema.Struct({
   activities: Schema.Array(OrchestrationThreadActivity),
   checkpoints: Schema.Array(OrchestrationCheckpointSummary),
   session: Schema.NullOr(OrchestrationSession),
+  redo: Schema.NullOr(OrchestrationThreadRedoState).pipe(
+    Schema.withDecodingDefault(Effect.succeed(null)),
+  ),
 });
 export type OrchestrationThread = typeof OrchestrationThread.Type;
 
@@ -564,6 +587,30 @@ const ThreadCreateCommand = Schema.Struct({
   ),
   branch: Schema.NullOr(TrimmedNonEmptyString),
   worktreePath: Schema.NullOr(TrimmedNonEmptyString),
+  createdAt: IsoDateTime,
+});
+
+/**
+ * `thread.branch` — duplicate an existing thread's conversation into a new,
+ * independent thread.
+ *
+ * The decider copies messages and activities from the source thread up to and
+ * including `sourceMessageId` (an assistant message), or the whole
+ * conversation when omitted. Only existing event types are emitted
+ * (`thread.created`, `thread.message-sent`, `thread.activity-appended`), so
+ * the wire protocol stays unchanged. Copied content carries `turnId: null`;
+ * checkpoints are not copied — the branched thread starts its own checkpoint
+ * history.
+ */
+const ThreadBranchCommand = Schema.Struct({
+  type: Schema.Literal("thread.branch"),
+  commandId: CommandId,
+  sourceThreadId: ThreadId,
+  /** Branch boundary: copy up to and including this assistant message. */
+  sourceMessageId: Schema.optional(MessageId),
+  /** Id of the new thread to create. */
+  threadId: ThreadId,
+  title: Schema.optional(TrimmedNonEmptyString),
   createdAt: IsoDateTime,
 });
 
@@ -753,6 +800,24 @@ const ThreadCheckpointRevertCommand = Schema.Struct({
   commandId: CommandId,
   threadId: ThreadId,
   turnCount: NonNegativeInt,
+  /**
+   * When false, roll back conversation state (messages, provider history,
+   * checkpoint summaries) without restoring workspace files. Used by the
+   * "edit message without reverting files" flow. Defaults to true.
+   */
+  restoreFiles: Schema.optional(Schema.Boolean),
+  createdAt: IsoDateTime,
+});
+
+/**
+ * Undo the most recent checkpoint revert. Only valid while the thread still
+ * carries a redo stash (i.e. no new turn started since the revert). The redo
+ * target and file-restore choice are taken from the stash server-side.
+ */
+const ThreadCheckpointRedoCommand = Schema.Struct({
+  type: Schema.Literal("thread.checkpoint.redo"),
+  commandId: CommandId,
+  threadId: ThreadId,
   createdAt: IsoDateTime,
 });
 
@@ -768,6 +833,7 @@ const DispatchableClientOrchestrationCommand = Schema.Union([
   ProjectMetaUpdateCommand,
   ProjectDeleteCommand,
   ThreadCreateCommand,
+  ThreadBranchCommand,
   ThreadDeleteCommand,
   ThreadArchiveCommand,
   ThreadUnarchiveCommand,
@@ -783,6 +849,7 @@ const DispatchableClientOrchestrationCommand = Schema.Union([
   ThreadApprovalRespondCommand,
   ThreadUserInputRespondCommand,
   ThreadCheckpointRevertCommand,
+  ThreadCheckpointRedoCommand,
   ThreadSessionStopCommand,
 ]);
 export type DispatchableClientOrchestrationCommand =
@@ -793,6 +860,7 @@ export const ClientOrchestrationCommand = Schema.Union([
   ProjectMetaUpdateCommand,
   ProjectDeleteCommand,
   ThreadCreateCommand,
+  ThreadBranchCommand,
   ThreadDeleteCommand,
   ThreadArchiveCommand,
   ThreadUnarchiveCommand,
@@ -808,6 +876,7 @@ export const ClientOrchestrationCommand = Schema.Union([
   ThreadApprovalRespondCommand,
   ThreadUserInputRespondCommand,
   ThreadCheckpointRevertCommand,
+  ThreadCheckpointRedoCommand,
   ThreadSessionStopCommand,
 ]);
 export type ClientOrchestrationCommand = typeof ClientOrchestrationCommand.Type;
@@ -874,6 +943,28 @@ const ThreadRevertCompleteCommand = Schema.Struct({
   commandId: CommandId,
   threadId: ThreadId,
   turnCount: NonNegativeInt,
+  /** Whether the revert restored workspace files. Recorded for redo. */
+  restoreFiles: Schema.optional(Schema.Boolean),
+  /**
+   * Redo stash computed by the checkpoint reactor from the full thread detail
+   * (merged with any not-yet-diverged earlier stash). Passed through onto the
+   * `thread.reverted` event so all projections store identical stash data.
+   */
+  redoStash: Schema.optional(Schema.NullOr(OrchestrationThreadRedoState)),
+  createdAt: IsoDateTime,
+});
+
+const ThreadRedoCompleteCommand = Schema.Struct({
+  type: Schema.Literal("thread.redo.complete"),
+  commandId: CommandId,
+  threadId: ThreadId,
+  turnCount: NonNegativeInt,
+  /** The stash content being restored; copied onto the `thread.redone` event. */
+  messages: Schema.Array(OrchestrationMessage),
+  proposedPlans: Schema.Array(OrchestrationProposedPlan),
+  activities: Schema.Array(OrchestrationThreadActivity),
+  checkpoints: Schema.Array(OrchestrationCheckpointSummary),
+  latestTurn: Schema.NullOr(OrchestrationLatestTurn),
   createdAt: IsoDateTime,
 });
 
@@ -894,6 +985,7 @@ const InternalOrchestrationCommand = Schema.Union([
   ThreadActivityAppendCommand,
   ThreadRevertCompleteCommand,
   ThreadTitleRegenerationCompleteCommand,
+  ThreadRedoCompleteCommand,
 ]);
 export type InternalOrchestrationCommand = typeof InternalOrchestrationCommand.Type;
 
@@ -925,6 +1017,8 @@ export const OrchestrationEventType = Schema.Literals([
   "thread.user-input-response-requested",
   "thread.checkpoint-revert-requested",
   "thread.reverted",
+  "thread.checkpoint-redo-requested",
+  "thread.redone",
   "thread.session-stop-requested",
   "thread.session-set",
   "thread.proposed-plan-upserted",
@@ -1101,12 +1195,54 @@ const ThreadUserInputResponseRequestedPayload = Schema.Struct({
 export const ThreadCheckpointRevertRequestedPayload = Schema.Struct({
   threadId: ThreadId,
   turnCount: NonNegativeInt,
+  /** When false, skip restoring workspace files. Defaults to true. */
+  restoreFiles: Schema.optional(Schema.Boolean),
   createdAt: IsoDateTime,
 });
 
 export const ThreadRevertedPayload = Schema.Struct({
   threadId: ThreadId,
   turnCount: NonNegativeInt,
+  /**
+   * Whether the revert restored workspace files. Defaults to true; false for
+   * the "edit message without reverting files" flow.
+   */
+  restoreFiles: Schema.optional(Schema.Boolean),
+  /**
+   * Conversation content this revert removed (merged with any stash from an
+   * earlier, not-yet-diverged revert). Carried on the event so every
+   * projection (in-memory read model, SQL rows, connected clients) stores the
+   * same stash deterministically, including during event replay. Absent on
+   * events persisted before redo support existed.
+   */
+  redoStash: Schema.optional(Schema.NullOr(OrchestrationThreadRedoState)),
+});
+
+export const ThreadCheckpointRedoRequestedPayload = Schema.Struct({
+  threadId: ThreadId,
+  /**
+   * The stash being restored, resolved by the decider from the thread's redo
+   * state at dispatch time. Self-contained so the checkpoint reactor can act
+   * on the event alone.
+   */
+  redo: OrchestrationThreadRedoState,
+  createdAt: IsoDateTime,
+});
+
+/**
+ * Emitted when a checkpoint revert was undone. Carries the restored
+ * conversation slices so every projection (in-memory read model, SQL
+ * projections, connected clients) can splice them back deterministically —
+ * including during event replay, where no redo stash exists.
+ */
+export const ThreadRedonePayload = Schema.Struct({
+  threadId: ThreadId,
+  turnCount: NonNegativeInt,
+  messages: Schema.Array(OrchestrationMessage),
+  proposedPlans: Schema.Array(OrchestrationProposedPlan),
+  activities: Schema.Array(OrchestrationThreadActivity),
+  checkpoints: Schema.Array(OrchestrationCheckpointSummary),
+  latestTurn: Schema.NullOr(OrchestrationLatestTurn),
 });
 
 export const ThreadSessionStopRequestedPayload = Schema.Struct({
@@ -1266,6 +1402,16 @@ export const OrchestrationEvent = Schema.Union([
     ...EventBaseFields,
     type: Schema.Literal("thread.reverted"),
     payload: ThreadRevertedPayload,
+  }),
+  Schema.Struct({
+    ...EventBaseFields,
+    type: Schema.Literal("thread.checkpoint-redo-requested"),
+    payload: ThreadCheckpointRedoRequestedPayload,
+  }),
+  Schema.Struct({
+    ...EventBaseFields,
+    type: Schema.Literal("thread.redone"),
+    payload: ThreadRedonePayload,
   }),
   Schema.Struct({
     ...EventBaseFields,

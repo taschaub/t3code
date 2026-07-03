@@ -92,6 +92,7 @@ export function buildLocalDraftThread(
     checkpoints: [],
     activities: [],
     proposedPlans: [],
+    redo: null,
   };
 }
 

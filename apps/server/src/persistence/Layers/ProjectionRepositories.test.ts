@@ -100,6 +100,7 @@ projectionRepositoriesLayer("Projection repositories", (it) => {
         pendingUserInputCount: 0,
         hasActionableProposedPlan: 0,
         deletedAt: null,
+        redo: null,
       });
 
       const rows = yield* sql<{

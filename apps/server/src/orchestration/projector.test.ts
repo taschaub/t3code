@@ -6,6 +6,7 @@ import {
   ThreadId,
   type OrchestrationEvent,
 } from "@t3tools/contracts";
+import { it as itEffect } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import { describe, expect, it } from "vite-plus/test";
 
@@ -99,6 +100,7 @@ describe("orchestration projector", () => {
         activities: [],
         checkpoints: [],
         session: null,
+        redo: null,
       },
     ]);
   });
@@ -702,6 +704,192 @@ describe("orchestration projector", () => {
     expect(thread?.checkpoints.map((checkpoint) => checkpoint.checkpointTurnCount)).toEqual([1]);
     expect(thread?.latestTurn?.turnId).toBe("turn-1");
   });
+
+  itEffect.effect(
+    "stores the redo stash on revert, restores it on redone, and clears it on a new turn",
+    () =>
+      Effect.gen(function* () {
+        const createdAt = "2026-02-23T10:00:00.000Z";
+        const model = createEmptyReadModel(createdAt);
+
+        // Slices of the second turn, exactly as the checkpoint reactor would
+        // stash them when reverting to turn 1.
+        const stashedMessage = {
+          id: "assistant-msg-2",
+          role: "assistant",
+          text: "Updated README to v3.\n",
+          turnId: "turn-2",
+          streaming: false,
+          createdAt: "2026-02-23T10:00:04.000Z",
+          updatedAt: "2026-02-23T10:00:04.000Z",
+        };
+        const stashedCheckpoint = {
+          turnId: "turn-2",
+          checkpointTurnCount: 2,
+          checkpointRef: "refs/t3/checkpoints/thread-1/turn/2",
+          status: "ready",
+          files: [],
+          assistantMessageId: "assistant-msg-2",
+          completedAt: "2026-02-23T10:00:04.500Z",
+        };
+        const stashedLatestTurn = {
+          turnId: "turn-2",
+          state: "completed",
+          requestedAt: "2026-02-23T10:00:04.500Z",
+          startedAt: "2026-02-23T10:00:04.500Z",
+          completedAt: "2026-02-23T10:00:04.500Z",
+          assistantMessageId: "assistant-msg-2",
+        };
+        const redoStash = {
+          turnCount: 2,
+          filesRestored: true,
+          messages: [stashedMessage],
+          proposedPlans: [],
+          activities: [],
+          checkpoints: [stashedCheckpoint],
+          latestTurn: stashedLatestTurn,
+          revertedAt: "2026-02-23T10:00:05.000Z",
+        };
+
+        const setupEvents: ReadonlyArray<OrchestrationEvent> = [
+          makeEvent({
+            sequence: 1,
+            type: "thread.created",
+            aggregateKind: "thread",
+            aggregateId: "thread-1",
+            occurredAt: createdAt,
+            commandId: "cmd-create",
+            payload: {
+              threadId: "thread-1",
+              projectId: "project-1",
+              title: "demo",
+              modelSelection: {
+                provider: ProviderDriverKind.make("codex"),
+                model: "gpt-5.3-codex",
+              },
+              runtimeMode: "full-access",
+              branch: null,
+              worktreePath: null,
+              createdAt,
+              updatedAt: createdAt,
+            },
+          }),
+          makeEvent({
+            sequence: 2,
+            type: "thread.message-sent",
+            aggregateKind: "thread",
+            aggregateId: "thread-1",
+            occurredAt: "2026-02-23T10:00:02.000Z",
+            commandId: "cmd-assistant-1",
+            payload: {
+              threadId: "thread-1",
+              messageId: "assistant-msg-1",
+              role: "assistant",
+              text: "Updated README to v2.\n",
+              turnId: "turn-1",
+              streaming: false,
+              createdAt: "2026-02-23T10:00:02.000Z",
+              updatedAt: "2026-02-23T10:00:02.000Z",
+            },
+          }),
+          makeEvent({
+            sequence: 3,
+            type: "thread.turn-diff-completed",
+            aggregateKind: "thread",
+            aggregateId: "thread-1",
+            occurredAt: "2026-02-23T10:00:02.500Z",
+            commandId: "cmd-turn-1-complete",
+            payload: {
+              threadId: "thread-1",
+              turnId: "turn-1",
+              checkpointTurnCount: 1,
+              checkpointRef: "refs/t3/checkpoints/thread-1/turn/1",
+              status: "ready",
+              files: [],
+              assistantMessageId: "assistant-msg-1",
+              completedAt: "2026-02-23T10:00:02.500Z",
+            },
+          }),
+          makeEvent({
+            sequence: 4,
+            type: "thread.reverted",
+            aggregateKind: "thread",
+            aggregateId: "thread-1",
+            occurredAt: "2026-02-23T10:00:05.000Z",
+            commandId: "cmd-revert",
+            payload: {
+              threadId: "thread-1",
+              turnCount: 1,
+              redoStash,
+            },
+          }),
+        ];
+
+        let afterRevert = model;
+        for (const event of setupEvents) {
+          afterRevert = yield* projectEvent(afterRevert, event);
+        }
+
+        // Revert keeps the stash alive on the thread.
+        expect(afterRevert.threads[0]?.redo?.turnCount).toBe(2);
+        expect(afterRevert.threads[0]?.redo?.messages.map((message) => message.id)).toEqual([
+          "assistant-msg-2",
+        ]);
+
+        // Redone splices the stashed slices back and consumes the stash.
+        const afterRedo = yield* projectEvent(
+          afterRevert,
+          makeEvent({
+            sequence: 5,
+            type: "thread.redone",
+            aggregateKind: "thread",
+            aggregateId: "thread-1",
+            occurredAt: "2026-02-23T10:00:06.000Z",
+            commandId: "cmd-redo",
+            payload: {
+              threadId: "thread-1",
+              turnCount: 2,
+              messages: [stashedMessage],
+              proposedPlans: [],
+              activities: [],
+              checkpoints: [stashedCheckpoint],
+              latestTurn: stashedLatestTurn,
+            },
+          }),
+        );
+
+        const redoneThread = afterRedo.threads[0];
+        expect(redoneThread?.redo).toBeNull();
+        expect(redoneThread?.messages.map((message) => message.id)).toEqual([
+          "assistant-msg-1",
+          "assistant-msg-2",
+        ]);
+        expect(
+          redoneThread?.checkpoints.map((checkpoint) => checkpoint.checkpointTurnCount),
+        ).toEqual([1, 2]);
+        expect(redoneThread?.latestTurn?.turnId).toBe("turn-2");
+
+        // A new turn diverges the history: any pending stash is dropped.
+        const afterNewTurn = yield* projectEvent(
+          afterRevert,
+          makeEvent({
+            sequence: 5,
+            type: "thread.turn-start-requested",
+            aggregateKind: "thread",
+            aggregateId: "thread-1",
+            occurredAt: "2026-02-23T10:00:06.000Z",
+            commandId: "cmd-new-turn",
+            payload: {
+              threadId: "thread-1",
+              messageId: "user-msg-next",
+              createdAt: "2026-02-23T10:00:06.000Z",
+            },
+          }),
+        );
+
+        expect(afterNewTurn.threads[0]?.redo).toBeNull();
+      }),
+  );
 
   it("does not fallback-retain messages tied to removed turn IDs", async () => {
     const createdAt = "2026-02-26T12:00:00.000Z";
