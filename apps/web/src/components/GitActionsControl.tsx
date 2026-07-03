@@ -1111,11 +1111,6 @@ export default function GitActionsControl({
     sourceControlScope,
     RUNNING_SOURCE_CONTROL_ACTIONS,
   );
-  const isSelectingWorktreeBase =
-    !activeServerThread &&
-    activeDraftThread?.envMode === "worktree" &&
-    activeDraftThread.worktreePath === null;
-
   // NOTE: We deliberately no longer auto-relink a chat's branch to whatever
   // the working tree is currently on. Branch tracking now belongs to the chat
   // (see lib/threadBranchTracking + chat/useThreadBranchTracking), and silent
