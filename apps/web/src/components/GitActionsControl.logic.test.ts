@@ -6,7 +6,6 @@ import {
   requiresDefaultBranchConfirmation,
   resolveAutoFeatureBranchName,
   resolveDefaultBranchActionDialogCopy,
-  resolveLiveThreadBranchUpdate,
   resolveQuickAction,
   resolveThreadBranchUpdate,
 } from "./GitActionsControl.logic";
@@ -1050,64 +1049,6 @@ describe("resolveThreadBranchUpdate", () => {
     });
 
     assert.equal(update, null);
-  });
-});
-
-describe("resolveLiveThreadBranchUpdate", () => {
-  it("returns a branch update when live git status differs from stored thread metadata", () => {
-    const update = resolveLiveThreadBranchUpdate({
-      threadBranch: "feature/old-ref",
-      gitStatus: status({ refName: "effect-atom" }),
-    });
-
-    assert.deepEqual(update, {
-      branch: "effect-atom",
-    });
-  });
-
-  it("returns null when live git status is unavailable", () => {
-    const update = resolveLiveThreadBranchUpdate({
-      threadBranch: "feature/old-ref",
-      gitStatus: null,
-    });
-
-    assert.equal(update, null);
-  });
-
-  it("returns null when the stored thread ref already matches git status", () => {
-    const update = resolveLiveThreadBranchUpdate({
-      threadBranch: "effect-atom",
-      gitStatus: status({ refName: "effect-atom" }),
-    });
-
-    assert.equal(update, null);
-  });
-
-  it("returns null when git status is detached HEAD but the thread already has a ref", () => {
-    const update = resolveLiveThreadBranchUpdate({
-      threadBranch: "effect-atom",
-      gitStatus: status({ refName: null }),
-    });
-
-    assert.equal(update, null);
-  });
-
-  it("does not regress a semantic thread ref back to a temporary worktree ref", () => {
-    const update = resolveLiveThreadBranchUpdate({
-      threadBranch: "t3code/github-query-rate-limit",
-      gitStatus: status({ refName: "t3code/bda76797" }),
-    });
-
-    assert.equal(update, null);
-  });
-
-  it("allows a temporary worktree ref to reconcile to a semantic branch", () => {
-    const update = resolveLiveThreadBranchUpdate({
-      threadBranch: "t3code/a9628676",
-      gitStatus: status({ refName: "feature/diff-panel-toggle" }),
-    });
-
-    assert.deepEqual(update, { branch: "feature/diff-panel-toggle" });
   });
 });
 

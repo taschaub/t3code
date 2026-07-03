@@ -64,8 +64,8 @@ import {
 } from "@t3tools/client-runtime/state/runtime";
 import * as Cause from "effect/Cause";
 import { AsyncResult } from "effect/unstable/reactivity";
+import { resolveThreadBranchAutoLink } from "~/lib/threadBranchTracking";
 import { isElectron } from "../env";
-import { readLocalApi } from "../localApi";
 import { useDiffPanelStore } from "../diffPanelStore";
 import {
   collapseExpandedComposerCursor,
@@ -75,6 +75,7 @@ import {
   derivePendingApprovals,
   derivePendingUserInputs,
   derivePhase,
+  deriveRevertTurnCountByUserMessageId,
   deriveTimelineEntries,
   deriveActiveWorkStartedAt,
   deriveActivePlanState,
@@ -212,6 +213,7 @@ import { resolveEffectiveEnvMode } from "./BranchToolbar.logic";
 import { ProviderStatusBanner } from "./chat/ProviderStatusBanner";
 import { ThreadErrorBanner } from "./chat/ThreadErrorBanner";
 import { ComposerBannerStack, type ComposerBannerStackItem } from "./chat/ComposerBannerStack";
+import { useThreadBranchTracking } from "./chat/useThreadBranchTracking";
 import {
   MAX_HIDDEN_MOUNTED_TERMINAL_THREADS,
   buildExpiredTerminalContextToastCopy,
@@ -2098,38 +2100,24 @@ function ChatViewContent(props: ChatViewProps) {
     }
     return byMessageId;
   }, [turnDiffSummaries]);
-  const revertTurnCountByUserMessageId = useMemo(() => {
-    const byUserMessageId = new Map<MessageId, number>();
-    for (let index = 0; index < timelineEntries.length; index += 1) {
-      const entry = timelineEntries[index];
-      if (!entry || entry.kind !== "message" || entry.message.role !== "user") {
-        continue;
-      }
-
-      for (let nextIndex = index + 1; nextIndex < timelineEntries.length; nextIndex += 1) {
-        const nextEntry = timelineEntries[nextIndex];
-        if (!nextEntry || nextEntry.kind !== "message") {
-          continue;
-        }
-        if (nextEntry.message.role === "user") {
-          break;
-        }
-        const summary = turnDiffSummaryByAssistantMessageId.get(nextEntry.message.id);
-        if (!summary) {
-          continue;
-        }
-        const turnCount =
-          summary.checkpointTurnCount ?? inferredCheckpointTurnCountByTurnId[summary.turnId];
-        if (typeof turnCount !== "number") {
-          break;
-        }
-        byUserMessageId.set(entry.message.id, Math.max(0, turnCount - 1));
-        break;
-      }
-    }
-
-    return byUserMessageId;
-  }, [inferredCheckpointTurnCountByTurnId, timelineEntries, turnDiffSummaryByAssistantMessageId]);
+  const revertTurnCountByUserMessageId = useMemo(
+    () =>
+      deriveRevertTurnCountByUserMessageId({
+        timelineEntries,
+        turnDiffSummaryByAssistantMessageId,
+        inferredCheckpointTurnCountByTurnId,
+        checkpoints: activeThread?.checkpoints ?? [],
+        runningTurnId:
+          activeThread?.session?.status === "running" ? activeThread.session.activeTurnId : null,
+      }),
+    [
+      activeThread?.checkpoints,
+      activeThread?.session,
+      inferredCheckpointTurnCountByTurnId,
+      timelineEntries,
+      turnDiffSummaryByAssistantMessageId,
+    ],
+  );
 
   const gitCwd = activeProject
     ? projectScriptCwd({
@@ -2176,6 +2164,25 @@ function ChatViewContent(props: ChatViewProps) {
     terminalUiLaunchContext?.threadId === activeThreadId ? terminalUiLaunchContext : null;
   // Default true while loading to avoid toolbar flicker.
   const isGitRepo = gitStatusQuery.data?.isRepo ?? true;
+  // Branch-tracking glue: auto-link the chat to its first observed branch
+  // and surface a mismatch banner with checkout/relink actions when the
+  // working tree drifts. Only meaningful for server threads inside a repo.
+  const { mismatchBannerItem: branchMismatchBannerItem } = useThreadBranchTracking({
+    threadRef: isServerThread ? activeThreadRef : null,
+    threadBranch: activeThread?.branch ?? null,
+    worktreePath: activeThread?.worktreePath ?? null,
+    projectCwd: activeProject?.workspaceRoot ?? null,
+    gitStatus: isGitRepo ? (gitStatusQuery.data ?? null) : null,
+    isSendInFlight: isSendBusy,
+  });
+  const composerBannerItemsWithBranchMismatch = useMemo<ComposerBannerStackItem[]>(() => {
+    if (!branchMismatchBannerItem) {
+      return composerBannerItems;
+    }
+    // Mismatch goes first: it actively blocks the user's mental model of
+    // "where will this run?" and we want it to be the front-of-stack item.
+    return [branchMismatchBannerItem, ...composerBannerItems];
+  }, [branchMismatchBannerItem, composerBannerItems]);
   const terminalShortcutLabelOptions = useMemo(
     () => ({
       context: {
@@ -3613,6 +3620,18 @@ function ChatViewContent(props: ChatViewProps) {
       ? (pendingServerThreadStartFromOriginByThreadId[activeThread?.id ?? ""] ??
         settings.newWorktreesStartFromOrigin)
       : false;
+  const liveThreadBranch =
+    resolveThreadBranchAutoLink({
+      threadBranch: null,
+      gitStatus: gitStatusQuery.data ?? null,
+    })?.branch ?? null;
+  // First-send binding happens here, not when a new draft is opened. Drafts
+  // may carry a seeded branch from the previous chat or from the toolbar, but
+  // the actual chat link should reflect the working tree at send time.
+  const initialThreadBranch =
+    activeThread?.messages.length === 0
+      ? (liveThreadBranch ?? activeThreadBranch)
+      : (activeThreadBranch ?? liveThreadBranch);
   const sendEnvMode = resolveSendEnvMode({
     requestedEnvMode: envMode,
     isGitRepo,
@@ -4007,9 +4026,14 @@ function ChatViewContent(props: ChatViewProps) {
     };
   }, [activeThread, isRevertingCheckpoint, isServerThread, onRedoCheckpoint]);
 
+  // Builds on the branch-mismatch stack so both banners can show together
+  // (mismatch stays front-of-stack, redo is appended).
   const composerBannerItemsWithRedo = useMemo<ComposerBannerStackItem[]>(
-    () => (redoBannerItem ? [...composerBannerItems, redoBannerItem] : composerBannerItems),
-    [composerBannerItems, redoBannerItem],
+    () =>
+      redoBannerItem
+        ? [...composerBannerItemsWithBranchMismatch, redoBannerItem]
+        : composerBannerItemsWithBranchMismatch,
+    [composerBannerItemsWithBranchMismatch, redoBannerItem],
   );
 
   // Edit flow: the user picked whether workspace files should be restored.
@@ -4181,14 +4205,14 @@ function ChatViewContent(props: ChatViewProps) {
     const isFirstMessage = !isServerThread || activeThread.messages.length === 0;
     const baseBranchForWorktree =
       isFirstMessage && sendEnvMode === "worktree" && !activeThread.worktreePath
-        ? activeThreadBranch
+        ? initialThreadBranch
         : null;
 
     // In worktree mode, require an explicit base branch so we don't silently
     // fall back to local execution when branch selection is missing.
     const shouldCreateWorktree =
       isFirstMessage && sendEnvMode === "worktree" && !activeThread.worktreePath;
-    if (shouldCreateWorktree && !activeThreadBranch) {
+    if (shouldCreateWorktree && !initialThreadBranch) {
       setThreadError(threadIdForSend, "Select a base branch before sending in New worktree mode.");
       return;
     }
@@ -4356,7 +4380,7 @@ function ChatViewContent(props: ChatViewProps) {
                       modelSelection: threadCreateModelSelection,
                       runtimeMode,
                       interactionMode,
-                      branch: activeThreadBranch,
+                      branch: initialThreadBranch,
                       worktreePath: activeThread.worktreePath,
                       createdAt: activeThread.createdAt,
                     },
@@ -4852,7 +4876,7 @@ function ChatViewContent(props: ChatViewProps) {
         modelSelection: nextThreadModelSelection,
         runtimeMode,
         interactionMode: "default",
-        branch: activeThreadBranch,
+        branch: initialThreadBranch,
         worktreePath: activeThread.worktreePath,
         createdAt,
       },
@@ -4938,7 +4962,7 @@ function ChatViewContent(props: ChatViewProps) {
   }, [
     activeProject,
     activeProposedPlan,
-    activeThreadBranch,
+    initialThreadBranch,
     activeThread,
     beginLocalDispatch,
     activeEnvironmentUnavailable,

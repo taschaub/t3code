@@ -9,6 +9,7 @@ import {
   ProviderDriverKind,
   type ToolLifecycleItemType,
   type UserInputQuestion,
+  type MessageId,
   type ThreadId,
   type TurnId,
 } from "@t3tools/contracts";
@@ -1378,6 +1379,93 @@ export function inferCheckpointTurnCountByTurnId(
     result[summary.turnId] = index + 1;
   }
   return result;
+}
+
+/**
+ * Maps each user message to the checkpoint turn count a revert/edit should
+ * target (the state just before that message was sent).
+ *
+ * Settled turns resolve through the next assistant message's turn diff
+ * summary. The newest user message of a still-running turn has no settled
+ * summary yet, so it falls back to its own turn's checkpoint (placeholder)
+ * or, when none exists yet, to the highest captured turn count — that is the
+ * pre-turn baseline snapshot taken when the turn started.
+ */
+export function deriveRevertTurnCountByUserMessageId(input: {
+  timelineEntries: ReadonlyArray<TimelineEntry>;
+  turnDiffSummaryByAssistantMessageId: ReadonlyMap<MessageId, TurnDiffSummary>;
+  inferredCheckpointTurnCountByTurnId: Record<TurnId, number>;
+  checkpoints: ReadonlyArray<TurnDiffSummary>;
+  runningTurnId: TurnId | null;
+}): Map<MessageId, number> {
+  const {
+    timelineEntries,
+    turnDiffSummaryByAssistantMessageId,
+    inferredCheckpointTurnCountByTurnId,
+    checkpoints,
+    runningTurnId,
+  } = input;
+  const byUserMessageId = new Map<MessageId, number>();
+  let lastUserEntry: Extract<TimelineEntry, { kind: "message" }> | null = null;
+
+  for (let index = 0; index < timelineEntries.length; index += 1) {
+    const entry = timelineEntries[index];
+    if (!entry || entry.kind !== "message" || entry.message.role !== "user") {
+      continue;
+    }
+    lastUserEntry = entry;
+
+    for (let nextIndex = index + 1; nextIndex < timelineEntries.length; nextIndex += 1) {
+      const nextEntry = timelineEntries[nextIndex];
+      if (!nextEntry || nextEntry.kind !== "message") {
+        continue;
+      }
+      if (nextEntry.message.role === "user") {
+        break;
+      }
+      const summary = turnDiffSummaryByAssistantMessageId.get(nextEntry.message.id);
+      if (!summary) {
+        continue;
+      }
+      const turnCount =
+        summary.checkpointTurnCount ?? inferredCheckpointTurnCountByTurnId[summary.turnId];
+      if (typeof turnCount !== "number") {
+        break;
+      }
+      byUserMessageId.set(entry.message.id, Math.max(0, turnCount - 1));
+      break;
+    }
+  }
+
+  // Running-turn fallback: the newest user message is editable while the
+  // agent is still working (the revert flow interrupts the turn first).
+  if (
+    lastUserEntry !== null &&
+    !byUserMessageId.has(lastUserEntry.message.id) &&
+    lastUserEntry.message.turnId !== null &&
+    runningTurnId !== null &&
+    lastUserEntry.message.turnId === runningTurnId
+  ) {
+    const ownCheckpoint = checkpoints.find(
+      (checkpoint) => checkpoint.turnId === lastUserEntry.message.turnId,
+    );
+    if (ownCheckpoint) {
+      byUserMessageId.set(
+        lastUserEntry.message.id,
+        Math.max(0, ownCheckpoint.checkpointTurnCount - 1),
+      );
+    } else {
+      // No checkpoint entry yet — the pre-turn baseline sits at the highest
+      // captured turn count (0 for a brand-new thread).
+      const currentTurnCount = checkpoints.reduce(
+        (maxTurnCount, checkpoint) => Math.max(maxTurnCount, checkpoint.checkpointTurnCount),
+        0,
+      );
+      byUserMessageId.set(lastUserEntry.message.id, currentTurnCount);
+    }
+  }
+
+  return byUserMessageId;
 }
 
 export function derivePhase(session: ThreadSession | null): SessionPhase {

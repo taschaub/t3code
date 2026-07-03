@@ -44,7 +44,6 @@ import {
   type DefaultBranchConfirmableAction,
   requiresDefaultBranchConfirmation,
   resolveDefaultBranchActionDialogCopy,
-  resolveLiveThreadBranchUpdate,
   resolveQuickAction,
   resolveThreadBranchUpdate,
 } from "./GitActionsControl.logic";
@@ -1117,28 +1116,12 @@ export default function GitActionsControl({
     activeDraftThread?.envMode === "worktree" &&
     activeDraftThread.worktreePath === null;
 
-  useEffect(() => {
-    if (isGitActionRunning || isSelectingWorktreeBase) {
-      return;
-    }
-
-    const branchUpdate = resolveLiveThreadBranchUpdate({
-      threadBranch: activeServerThread?.branch ?? activeDraftThread?.branch ?? null,
-      gitStatus: gitStatusForActions,
-    });
-    if (!branchUpdate) {
-      return;
-    }
-
-    persistThreadBranchSync(branchUpdate.branch);
-  }, [
-    activeServerThread?.branch,
-    activeDraftThread?.branch,
-    gitStatusForActions,
-    isGitActionRunning,
-    isSelectingWorktreeBase,
-    persistThreadBranchSync,
-  ]);
+  // NOTE: We deliberately no longer auto-relink a chat's branch to whatever
+  // the working tree is currently on. Branch tracking now belongs to the chat
+  // (see lib/threadBranchTracking + chat/useThreadBranchTracking), and silent
+  // overwrites would defeat the mismatch banner's purpose. We still sync the
+  // branch *after explicit user actions* via syncThreadBranchAfterGitAction
+  // (e.g. when the user creates a feature branch through the menu).
 
   const isDefaultRef = useMemo(() => {
     return gitStatusForActions?.isDefaultRef ?? false;

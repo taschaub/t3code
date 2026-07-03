@@ -12,6 +12,7 @@ import {
   deriveActivePlanState,
   derivePendingApprovals,
   derivePendingUserInputs,
+  deriveRevertTurnCountByUserMessageId,
   deriveTimelineEntries,
   deriveWorkLogEntries,
   findLatestProposedPlan,
@@ -21,7 +22,9 @@ import {
   workEntryIndicatesToolFailure,
   workEntryIndicatesToolNeutralStatus,
   workEntryIndicatesToolSuccess,
+  type TimelineEntry,
 } from "./session-logic";
+import type { TurnDiffSummary } from "./types";
 
 let nextActivityId = 0;
 
@@ -1575,6 +1578,169 @@ describe("deriveWorkLogEntries context window handling", () => {
 
     expect(entries).toHaveLength(1);
     expect(entries[0]?.label).toBe("Context compacted");
+  });
+});
+
+describe("deriveRevertTurnCountByUserMessageId", () => {
+  const CHECKPOINT_REF = "refs/t3code/checkpoints/thread-1" as TurnDiffSummary["checkpointRef"];
+
+  function userEntry(id: string, turnId: string | null, createdAt: string): TimelineEntry {
+    return {
+      id,
+      kind: "message",
+      createdAt,
+      message: {
+        id: MessageId.make(id),
+        role: "user",
+        text: `user ${id}`,
+        createdAt,
+        updatedAt: createdAt,
+        turnId: turnId === null ? null : TurnId.make(turnId),
+        streaming: false,
+      },
+    };
+  }
+
+  function assistantEntry(id: string, turnId: string, createdAt: string): TimelineEntry {
+    return {
+      id,
+      kind: "message",
+      createdAt,
+      message: {
+        id: MessageId.make(id),
+        role: "assistant",
+        text: `assistant ${id}`,
+        createdAt,
+        updatedAt: createdAt,
+        turnId: TurnId.make(turnId),
+        streaming: false,
+      },
+    };
+  }
+
+  function checkpoint(overrides: {
+    turnId: string;
+    checkpointTurnCount: number;
+    assistantMessageId?: string | null;
+    status?: TurnDiffSummary["status"];
+    completedAt?: string;
+  }): TurnDiffSummary {
+    return {
+      turnId: TurnId.make(overrides.turnId),
+      checkpointTurnCount: overrides.checkpointTurnCount,
+      checkpointRef: CHECKPOINT_REF,
+      status: overrides.status ?? "ready",
+      files: [],
+      assistantMessageId:
+        overrides.assistantMessageId === undefined || overrides.assistantMessageId === null
+          ? null
+          : MessageId.make(overrides.assistantMessageId),
+      completedAt: overrides.completedAt ?? "2026-02-23T00:00:05.000Z",
+    };
+  }
+
+  it("maps settled user messages through their assistant turn diff summary", () => {
+    const summary = checkpoint({
+      turnId: "turn-1",
+      checkpointTurnCount: 1,
+      assistantMessageId: "assistant-1",
+    });
+    const map = deriveRevertTurnCountByUserMessageId({
+      timelineEntries: [
+        userEntry("user-1", "turn-1", "2026-02-23T00:00:01.000Z"),
+        assistantEntry("assistant-1", "turn-1", "2026-02-23T00:00:02.000Z"),
+      ],
+      turnDiffSummaryByAssistantMessageId: new Map([[MessageId.make("assistant-1"), summary]]),
+      inferredCheckpointTurnCountByTurnId: {},
+      checkpoints: [summary],
+      runningTurnId: null,
+    });
+
+    expect(map.get(MessageId.make("user-1"))).toBe(0);
+  });
+
+  it("maps the running turn's user message via its placeholder checkpoint", () => {
+    const settled = checkpoint({
+      turnId: "turn-1",
+      checkpointTurnCount: 1,
+      assistantMessageId: "assistant-1",
+    });
+    const placeholder = checkpoint({
+      turnId: "turn-2",
+      checkpointTurnCount: 2,
+      status: "missing",
+    });
+    const map = deriveRevertTurnCountByUserMessageId({
+      timelineEntries: [
+        userEntry("user-1", "turn-1", "2026-02-23T00:00:01.000Z"),
+        assistantEntry("assistant-1", "turn-1", "2026-02-23T00:00:02.000Z"),
+        userEntry("user-2", "turn-2", "2026-02-23T00:00:03.000Z"),
+      ],
+      turnDiffSummaryByAssistantMessageId: new Map([[MessageId.make("assistant-1"), settled]]),
+      inferredCheckpointTurnCountByTurnId: {},
+      checkpoints: [settled, placeholder],
+      runningTurnId: TurnId.make("turn-2"),
+    });
+
+    expect(map.get(MessageId.make("user-1"))).toBe(0);
+    expect(map.get(MessageId.make("user-2"))).toBe(1);
+  });
+
+  it("falls back to the highest captured turn count when the running turn has no checkpoint yet", () => {
+    const settled = checkpoint({
+      turnId: "turn-1",
+      checkpointTurnCount: 1,
+      assistantMessageId: "assistant-1",
+    });
+    const map = deriveRevertTurnCountByUserMessageId({
+      timelineEntries: [
+        userEntry("user-1", "turn-1", "2026-02-23T00:00:01.000Z"),
+        assistantEntry("assistant-1", "turn-1", "2026-02-23T00:00:02.000Z"),
+        userEntry("user-2", "turn-2", "2026-02-23T00:00:03.000Z"),
+      ],
+      turnDiffSummaryByAssistantMessageId: new Map([[MessageId.make("assistant-1"), settled]]),
+      inferredCheckpointTurnCountByTurnId: {},
+      checkpoints: [settled],
+      runningTurnId: TurnId.make("turn-2"),
+    });
+
+    expect(map.get(MessageId.make("user-2"))).toBe(1);
+  });
+
+  it("maps the very first user message of a brand-new running thread to turn count 0", () => {
+    const map = deriveRevertTurnCountByUserMessageId({
+      timelineEntries: [userEntry("user-1", "turn-1", "2026-02-23T00:00:01.000Z")],
+      turnDiffSummaryByAssistantMessageId: new Map(),
+      inferredCheckpointTurnCountByTurnId: {},
+      checkpoints: [],
+      runningTurnId: TurnId.make("turn-1"),
+    });
+
+    expect(map.get(MessageId.make("user-1"))).toBe(0);
+  });
+
+  it("does not fall back for user messages of other (non-running) turns", () => {
+    const map = deriveRevertTurnCountByUserMessageId({
+      timelineEntries: [userEntry("user-1", "turn-1", "2026-02-23T00:00:01.000Z")],
+      turnDiffSummaryByAssistantMessageId: new Map(),
+      inferredCheckpointTurnCountByTurnId: {},
+      checkpoints: [],
+      runningTurnId: TurnId.make("turn-2"),
+    });
+
+    expect(map.size).toBe(0);
+  });
+
+  it("does not fall back for copied branch history without a turn binding", () => {
+    const map = deriveRevertTurnCountByUserMessageId({
+      timelineEntries: [userEntry("user-1", null, "2026-02-23T00:00:01.000Z")],
+      turnDiffSummaryByAssistantMessageId: new Map(),
+      inferredCheckpointTurnCountByTurnId: {},
+      checkpoints: [],
+      runningTurnId: TurnId.make("turn-1"),
+    });
+
+    expect(map.size).toBe(0);
   });
 });
 
