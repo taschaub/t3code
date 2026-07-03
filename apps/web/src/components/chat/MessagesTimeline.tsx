@@ -988,6 +988,9 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
   );
 }
 
+// Revert/Edit/Branch stay clickable while a turn is running: reverting or
+// editing interrupts the active turn first (handled in ChatView), and
+// branching copies only settled history so it is always safe.
 function RevertUserMessageButton({ messageId }: { messageId: MessageId }) {
   const ctx = use(TimelineRowCtx);
   const activity = use(TimelineRowActivityCtx);
@@ -1000,7 +1003,7 @@ function RevertUserMessageButton({ messageId }: { messageId: MessageId }) {
             type="button"
             size="xs"
             variant="ghost"
-            disabled={activity.isRevertingCheckpoint || activity.isWorking}
+            disabled={activity.isRevertingCheckpoint}
             onClick={() => ctx.onRevertUserMessage(messageId)}
             aria-label="Revert to this message"
           />
@@ -1028,7 +1031,7 @@ function EditUserMessageButton({ messageId, text }: { messageId: MessageId; text
             type="button"
             size="xs"
             variant="ghost"
-            disabled={activity.isRevertingCheckpoint || activity.isWorking}
+            disabled={activity.isRevertingCheckpoint}
             onClick={() => ctx.onEditUserMessage(messageId, text)}
             aria-label="Edit message and resend"
           />
@@ -1055,7 +1058,7 @@ function BranchFromMessageButton({ messageId }: { messageId: MessageId }) {
             type="button"
             size="xs"
             variant="ghost"
-            disabled={activity.isRevertingCheckpoint || activity.isWorking}
+            disabled={activity.isRevertingCheckpoint}
             onClick={() => ctx.onBranchFromMessage(messageId)}
             aria-label="Branch chat from here"
           />
