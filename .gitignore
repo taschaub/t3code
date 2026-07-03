@@ -27,6 +27,7 @@ squashfs-root/
 .gstack/
 dist-electron/
 .electron-runtime/
+.pnpm-store/
 node_modules/
 .alchemy/
 *.log
