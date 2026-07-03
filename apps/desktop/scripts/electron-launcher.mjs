@@ -15,12 +15,17 @@ const repoRoot = NodePath.resolve(desktopDir, "..", "..");
 const devBundleIdSuffix = NodePath.basename(repoRoot)
   .toLowerCase()
   .replaceAll(/[^a-z0-9]+/g, "");
-export const APP_DISPLAY_NAME = isDevelopment ? "T3 Code (Dev)" : "T3 Code (Alpha)";
+// Non-dev launcher runs (start:desktop, smoke tests) use the "Local" identity.
+// They must never reuse the release identity: sharing the bundle id and
+// protocol schemes with an installed release app confuses LaunchServices and
+// the runtime's single-instance handling.
+export const APP_DISPLAY_NAME = isDevelopment ? "T3 Code (Dev)" : "T3 Code (Local)";
 export const APP_BUNDLE_ID = isDevelopment
   ? `com.t3tools.t3code.dev.${devBundleIdSuffix || "local"}`
-  : "com.t3tools.t3code";
-const APP_PROTOCOL_SCHEMES = isDevelopment ? ["t3code-dev"] : ["t3code"];
-const LAUNCHER_VERSION = 14;
+  : `com.t3tools.t3code.local.${devBundleIdSuffix || "local"}`;
+const APP_PROTOCOL_SCHEMES = isDevelopment ? ["t3code-dev"] : ["t3code-local"];
+// Bumped past upstream's 14 because the local identity changes the bundle.
+const LAUNCHER_VERSION = 15;
 const defaultIconPath = NodePath.join(desktopDir, "resources", "icon.icns");
 const developmentMacIconPngPath = NodePath.join(
   repoRoot,
@@ -96,6 +101,16 @@ function runChecked(command, args) {
   throw new Error(`Failed to run ${command} ${args.join(" ")}: ${details}`.trim());
 }
 
+function runCheckedOrWarn(command, args, warning) {
+  try {
+    runChecked(command, args);
+    return true;
+  } catch (error) {
+    console.warn(warning, error);
+    return false;
+  }
+}
+
 function shellSingleQuote(value) {
   return `'${value.replaceAll("'", "'\\''")}'`;
 }
@@ -140,28 +155,33 @@ function writeDevelopmentLauncherScript(targetBinaryPath, electronBinaryPath) {
 }
 
 function registerMacLauncherBundle(appBundlePath) {
-  runChecked(
+  const registered = runCheckedOrWarn(
     "/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister",
     ["-f", appBundlePath],
+    "[desktop-launcher] Failed to register the local macOS launcher bundle; continuing without LaunchServices registration.",
   );
 
-  if (!isDevelopment) {
+  if (!isDevelopment || !registered) {
     return;
   }
 
   for (const scheme of APP_PROTOCOL_SCHEMES) {
-    runChecked("osascript", [
-      "-l",
-      "JavaScript",
-      "-e",
+    runCheckedOrWarn(
+      "osascript",
       [
-        'ObjC.import("CoreServices");',
-        `const scheme = $.NSString.alloc.initWithUTF8String(${JSON.stringify(scheme)});`,
-        `const bundle = $.NSString.alloc.initWithUTF8String(${JSON.stringify(APP_BUNDLE_ID)});`,
-        "const status = $.LSSetDefaultHandlerForURLScheme(scheme, bundle);",
-        "if (status !== 0) throw new Error(`LSSetDefaultHandlerForURLScheme failed: ${status}`);",
-      ].join(" "),
-    ]);
+        "-l",
+        "JavaScript",
+        "-e",
+        [
+          'ObjC.import("CoreServices");',
+          `const scheme = $.NSString.alloc.initWithUTF8String(${JSON.stringify(scheme)});`,
+          `const bundle = $.NSString.alloc.initWithUTF8String(${JSON.stringify(APP_BUNDLE_ID)});`,
+          "const status = $.LSSetDefaultHandlerForURLScheme(scheme, bundle);",
+          "if (status !== 0) throw new Error(`LSSetDefaultHandlerForURLScheme failed: ${status}`);",
+        ].join(" "),
+      ],
+      `[desktop-launcher] Failed to set the default handler for ${scheme}; continuing without protocol registration.`,
+    );
   }
 }
 

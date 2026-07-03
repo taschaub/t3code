@@ -36,6 +36,10 @@ import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 
 const LINUX_ICON_SIZES = [16, 22, 24, 32, 48, 64, 128, 256, 512] as const;
 const DESKTOP_APP_ID = "com.t3tools.t3code";
+// Local (personal, unsigned) builds get their own identity so they can be
+// installed and run next to a release build without fighting over the
+// Chromium userData dir, single-instance lock, or deep-link registration.
+const DESKTOP_LOCAL_APP_ID = "com.t3tools.t3code.local";
 const APPLE_TEAM_ID_PATTERN = /^[A-Z0-9]{10}$/u;
 
 const BuildPlatform = Schema.Literals(["mac", "linux", "win"]);
@@ -121,6 +125,7 @@ interface BuildCliInput {
   readonly skipBuild: Option.Option<boolean>;
   readonly keepStage: Option.Option<boolean>;
   readonly signed: Option.Option<boolean>;
+  readonly localBuild: Option.Option<boolean>;
   readonly verbose: Option.Option<boolean>;
   readonly mockUpdates: Option.Option<boolean>;
   readonly mockUpdateServerPort: Option.Option<number>;
@@ -555,6 +560,7 @@ interface ResolvedBuildOptions {
   readonly skipBuild: boolean;
   readonly keepStage: boolean;
   readonly signed: boolean;
+  readonly localBuild: boolean;
   readonly verbose: boolean;
   readonly mockUpdates: boolean;
   readonly mockUpdateServerPort: number | undefined;
@@ -566,6 +572,10 @@ interface StagePackageJson {
   readonly version: string;
   readonly buildVersion: string;
   readonly t3codeCommitHash: string;
+  // Marks personal/local artifacts. The desktop runtime reads this from the
+  // packaged package.json and switches to the separate "Local" app identity
+  // (own userData dir + ~/.t3-local) so the build runs next to a release app.
+  readonly t3codeLocalBuild?: true;
   readonly private: true;
   readonly packageManager: string;
   readonly description: string;
@@ -966,6 +976,7 @@ const BuildEnvConfig = Config.all({
   skipBuild: Config.boolean("T3CODE_DESKTOP_SKIP_BUILD").pipe(Config.withDefault(false)),
   keepStage: Config.boolean("T3CODE_DESKTOP_KEEP_STAGE").pipe(Config.withDefault(false)),
   signed: Config.boolean("T3CODE_DESKTOP_SIGNED").pipe(Config.withDefault(false)),
+  localBuild: Config.boolean("T3CODE_DESKTOP_LOCAL").pipe(Config.option),
   verbose: Config.boolean("T3CODE_DESKTOP_VERBOSE").pipe(Config.withDefault(false)),
   mockUpdates: Config.boolean("T3CODE_DESKTOP_MOCK_UPDATES").pipe(Config.withDefault(false)),
   mockUpdateServerPort: Config.string("T3CODE_DESKTOP_MOCK_UPDATE_SERVER_PORT").pipe(Config.option),
@@ -1045,6 +1056,15 @@ export const resolveBuildOptions = Effect.fn("resolveBuildOptions")(function* (
   const signed = resolveBooleanFlag(input.signed, env.signed);
   const verbose = resolveBooleanFlag(input.verbose, env.verbose);
 
+  // Local identity defaults to on for unsigned builds outside a release
+  // context (no update repository configured). CI release jobs always have
+  // GITHUB_REPOSITORY set, so even their unsigned platform builds keep the
+  // release identity. --local / T3CODE_DESKTOP_LOCAL override either way.
+  const publishRepository = yield* resolveConfiguredPublishRepository;
+  const localBuild = Option.getOrElse(input.localBuild, () =>
+    Option.getOrElse(env.localBuild, () => !signed && publishRepository === undefined),
+  );
+
   const mockUpdates = resolveBooleanFlag(input.mockUpdates, env.mockUpdates);
   const configuredMockUpdateServerPort = Option.getOrUndefined(env.mockUpdateServerPort);
   const mockUpdateServerPort =
@@ -1069,6 +1089,7 @@ export const resolveBuildOptions = Effect.fn("resolveBuildOptions")(function* (
     skipBuild,
     keepStage,
     signed,
+    localBuild,
     verbose,
     mockUpdates,
     mockUpdateServerPort,
@@ -1158,13 +1179,29 @@ function stageMacIcons(stageResourcesDir: string, sourcePng: string, verbose: bo
 
     const iconPngPath = path.join(stageResourcesDir, "icon.png");
     const iconIcnsPath = path.join(stageResourcesDir, "icon.icns");
+    const fallbackIconIcnsPath = path.join(stageResourcesDir, "..", "icon.icns");
 
     yield* runCommand(ChildProcess.make({})`sips -z 512 512 ${sourcePng} --out ${iconPngPath}`, {
       label: "sips mac icon",
       verbose,
     });
 
-    yield* generateMacIconSet(sourcePng, iconIcnsPath, tmpRoot, path, verbose);
+    yield* generateMacIconSet(sourcePng, iconIcnsPath, tmpRoot, path, verbose).pipe(
+      // Let TypeScript infer the error union (BuildCommandFailedError | PlatformError).
+      // generateMacIconSet also does fs work, so a narrower annotation breaks the types.
+      Effect.catch((error) =>
+        Effect.gen(function* () {
+          if (!(yield* fs.exists(fallbackIconIcnsPath))) {
+            return yield* error;
+          }
+
+          yield* Effect.logWarning(
+            "[desktop-artifact] Failed to generate icon.icns from the staged macOS PNG; falling back to apps/desktop/resources/icon.icns.",
+          );
+          yield* fs.copyFile(fallbackIconIcnsPath, iconIcnsPath);
+        }),
+      ),
+    );
   });
 }
 
@@ -1299,9 +1336,9 @@ export function resolveDesktopRuntimeDependencies(
   return resolveCatalogDependencies(runtimeDependencies, catalog, "apps/desktop");
 }
 
-export const resolveGitHubPublishConfig = Effect.fn("resolveGitHubPublishConfig")(function* (
-  updateChannel: "latest" | "nightly",
-) {
+// Owner/repo of the configured update feed, or undefined outside a release
+// context. Shared between the publish config and local-identity default.
+export const resolveConfiguredPublishRepository = Effect.gen(function* () {
   const env = yield* Config.all({
     updateRepository: Config.string("T3CODE_DESKTOP_UPDATE_REPOSITORY").pipe(Config.option),
     githubRepository: Config.string("GITHUB_REPOSITORY").pipe(Config.option),
@@ -1316,10 +1353,19 @@ export const resolveGitHubPublishConfig = Effect.fn("resolveGitHubPublishConfig"
   const [owner, repo, ...rest] = rawRepo.split("/");
   if (!owner || !repo || rest.length > 0) return undefined;
 
+  return { owner, repo } as const;
+});
+
+export const resolveGitHubPublishConfig = Effect.fn("resolveGitHubPublishConfig")(function* (
+  updateChannel: "latest" | "nightly",
+) {
+  const repository = yield* resolveConfiguredPublishRepository;
+  if (repository === undefined) return undefined;
+
   return {
     provider: "github",
-    owner,
-    repo,
+    owner: repository.owner,
+    repo: repository.repo,
     releaseType: updateChannel === "nightly" ? "prerelease" : "release",
     ...(updateChannel === "nightly" ? { channel: "nightly" as const } : {}),
   };
@@ -1333,8 +1379,13 @@ export function resolveDesktopWebAssetBrand(version: string): WebAssetBrand {
   return resolveWebAssetBrandForChannel(resolveDesktopUpdateChannel(version));
 }
 
-export function resolveDesktopBuildIconAssets(version: string): DesktopBuildIconAssets {
-  if (resolveDesktopUpdateChannel(version) === "nightly") {
+export function resolveDesktopBuildIconAssets(
+  version: string,
+  localBuild = false,
+): DesktopBuildIconAssets {
+  // Local builds reuse the nightly blueprint artwork so the Dock/taskbar icon
+  // is visually distinct from an installed release build.
+  if (localBuild || resolveDesktopUpdateChannel(version) === "nightly") {
     return {
       macIconPng: BRAND_ASSET_PATHS.nightlyMacIconPng,
       linuxIconPng: BRAND_ASSET_PATHS.nightlyLinuxIconPng,
@@ -1366,7 +1417,10 @@ export function resolvePackageManagerUserAgent(packageManager: string): string {
   return `${trimmed.slice(0, versionSeparator)}/${trimmed.slice(versionSeparator + 1)}`;
 }
 
-export function resolveDesktopProductName(version: string): string {
+export function resolveDesktopProductName(version: string, localBuild = false): string {
+  if (localBuild) {
+    return "T3 Code (Local)";
+  }
   return resolveDesktopUpdateChannel(version) === "nightly"
     ? "T3 Code (Nightly)"
     : (desktopPackageJson.productName ?? "T3 Code");
@@ -1385,11 +1439,14 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
         readonly provisioningProfilePath: string;
       }
     | undefined,
+  localBuild = false,
 ) {
   const buildConfig: Record<string, unknown> = {
-    appId: DESKTOP_APP_ID,
-    productName: resolveDesktopProductName(version),
-    artifactName: "T3-Code-${version}-${arch}.${ext}",
+    appId: localBuild ? DESKTOP_LOCAL_APP_ID : DESKTOP_APP_ID,
+    productName: resolveDesktopProductName(version, localBuild),
+    artifactName: localBuild
+      ? "T3-Code-Local-${version}-${arch}.${ext}"
+      : "T3-Code-${version}-${arch}.${ext}",
     directories: {
       buildResources: "apps/desktop/resources",
     },
@@ -1409,7 +1466,10 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
     asarUnpack: [...DESKTOP_ASAR_UNPACK, "apps/server/dist/**", "**/node_modules/**"],
   };
   const updateChannel = resolveDesktopUpdateChannel(version);
-  const publishConfig = yield* resolveGitHubPublishConfig(updateChannel);
+  // Local builds never get the GitHub update feed: auto-updating would replace
+  // the personal build with the official release. Mock updates stay available
+  // because they are an explicit local testing opt-in.
+  const publishConfig = localBuild ? undefined : yield* resolveGitHubPublishConfig(updateChannel);
   if (publishConfig) {
     buildConfig.publish = [publishConfig];
   } else if (mockUpdates) {
@@ -1429,7 +1489,10 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
       protocols: [
         {
           name: "T3 Code",
-          schemes: ["t3code", "t3code-dev"],
+          // Local builds must not register the release deep-link schemes,
+          // otherwise LaunchServices may route t3code:// links away from the
+          // installed release app.
+          schemes: localBuild ? ["t3code-local"] : ["t3code", "t3code-dev"],
         },
       ],
       ...(macPasskeySigning
@@ -1442,14 +1505,15 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
   }
 
   if (platform === "linux") {
+    const linuxExecutableName = localBuild ? "t3code-local" : "t3code";
     buildConfig.linux = {
       target: [target],
-      executableName: "t3code",
+      executableName: linuxExecutableName,
       icon: "icons",
       category: "Development",
       desktop: {
         entry: {
-          StartupWMClass: "t3code",
+          StartupWMClass: linuxExecutableName,
         },
       },
     };
@@ -1624,8 +1688,13 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
   });
 
   const appVersion = options.version ?? serverPackageJson.version;
-  const iconAssets = resolveDesktopBuildIconAssets(appVersion);
+  const iconAssets = resolveDesktopBuildIconAssets(appVersion, options.localBuild);
   const commitHash = yield* resolveGitCommitHash(repoRoot);
+  if (options.localBuild) {
+    yield* Effect.log(
+      `[desktop-artifact] Building with the local app identity (${DESKTOP_LOCAL_APP_ID}, "T3 Code (Local)") so the artifact can run next to an installed release build.`,
+    );
+  }
   const mkdir = options.keepStage ? fs.makeTempDirectory : fs.makeTempDirectoryScoped;
   const stageRoot = yield* mkdir({
     prefix: `t3code-desktop-${options.platform}-stage-`,
@@ -1758,6 +1827,7 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
     version: appVersion,
     buildVersion: appVersion,
     t3codeCommitHash: commitHash,
+    ...(options.localBuild ? { t3codeLocalBuild: true as const } : {}),
     private: true,
     packageManager: rootPackageJson.packageManager,
     description: "T3 Code desktop build",
@@ -1776,6 +1846,7 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
             provisioningProfilePath: macPasskeySigning.provisioningProfilePath,
           }
         : undefined,
+      options.localBuild,
     ),
     dependencies: stageDependencies,
     devDependencies: {
@@ -1961,6 +2032,12 @@ const buildDesktopArtifactCli = Command.make("build-desktop-artifact", {
   signed: Flag.boolean("signed").pipe(
     Flag.withDescription(
       "Enable signing/notarization discovery; Windows uses Azure Trusted Signing (env: T3CODE_DESKTOP_SIGNED).",
+    ),
+    Flag.optional,
+  ),
+  localBuild: Flag.boolean("local").pipe(
+    Flag.withDescription(
+      'Build with the separate local app identity (com.t3tools.t3code.local, "T3 Code (Local)") so the artifact runs next to an installed release build. Defaults to on for unsigned builds without a configured update repository (env: T3CODE_DESKTOP_LOCAL).',
     ),
     Flag.optional,
   ),

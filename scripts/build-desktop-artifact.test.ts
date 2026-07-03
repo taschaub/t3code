@@ -89,6 +89,11 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
     assert.equal(resolveDesktopProductName("0.0.17-nightly.20260413.42"), "T3 Code (Nightly)");
   });
 
+  it("switches desktop packaging product names to local for local builds", () => {
+    assert.equal(resolveDesktopProductName("0.0.17", true), "T3 Code (Local)");
+    assert.equal(resolveDesktopProductName("0.0.17-nightly.20260413.42", true), "T3 Code (Local)");
+  });
+
   it("switches desktop packaging icons to the nightly artwork for nightly versions", () => {
     assert.deepStrictEqual(resolveDesktopBuildIconAssets("0.0.17"), {
       macIconPng: BRAND_ASSET_PATHS.productionMacIconPng,
@@ -97,6 +102,13 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
     });
 
     assert.deepStrictEqual(resolveDesktopBuildIconAssets("0.0.17-nightly.20260413.42"), {
+      macIconPng: BRAND_ASSET_PATHS.nightlyMacIconPng,
+      linuxIconPng: BRAND_ASSET_PATHS.nightlyLinuxIconPng,
+      windowsIconIco: BRAND_ASSET_PATHS.nightlyWindowsIconIco,
+    });
+
+    // Local builds reuse the blueprint artwork so they are visually distinct.
+    assert.deepStrictEqual(resolveDesktopBuildIconAssets("0.0.17", true), {
       macIconPng: BRAND_ASSET_PATHS.nightlyMacIconPng,
       linuxIconPng: BRAND_ASSET_PATHS.nightlyLinuxIconPng,
       windowsIconIco: BRAND_ASSET_PATHS.nightlyWindowsIconIco,
@@ -498,6 +510,54 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
     }).pipe(Effect.provide(ConfigProvider.layer(ConfigProvider.fromEnv({ env: {} })))),
   );
 
+  it.effect("gives local builds their own identity and never a GitHub update feed", () =>
+    Effect.gen(function* () {
+      const config = yield* createBuildConfig(
+        "mac",
+        "dmg",
+        "1.2.3",
+        false,
+        false,
+        undefined,
+        undefined,
+        true,
+      );
+
+      const mac = config.mac as Record<string, unknown>;
+      assert.equal(config.appId, "com.t3tools.t3code.local");
+      assert.equal(config.productName, "T3 Code (Local)");
+      assert.equal(config.artifactName, "T3-Code-Local-${version}-${arch}.${ext}");
+      assert.deepStrictEqual(mac.protocols, [{ name: "T3 Code", schemes: ["t3code-local"] }]);
+      // GITHUB_REPOSITORY is set, but local builds must not auto-update from releases.
+      assert.notProperty(config, "publish");
+    }).pipe(
+      Effect.provide(
+        ConfigProvider.layer(
+          ConfigProvider.fromEnv({ env: { GITHUB_REPOSITORY: "pingdotgg/t3code" } }),
+        ),
+      ),
+    ),
+  );
+
+  it.effect("keeps the local Linux executable name separate from the release build", () =>
+    Effect.gen(function* () {
+      const config = yield* createBuildConfig(
+        "linux",
+        "AppImage",
+        "1.2.3",
+        false,
+        false,
+        undefined,
+        undefined,
+        true,
+      );
+
+      const linux = config.linux as Record<string, unknown>;
+      assert.equal(linux.executableName, "t3code-local");
+      assert.deepStrictEqual(linux.desktop, { entry: { StartupWMClass: "t3code-local" } });
+    }).pipe(Effect.provide(ConfigProvider.layer(ConfigProvider.fromEnv({ env: {} })))),
+  );
+
   it("promotes target fff binaries to direct staged dependencies", () => {
     assert.deepStrictEqual(resolveFffNativeDependencies("mac", "arm64", "0.9.4"), {
       "@ff-labs/fff-bin-darwin-arm64": "0.9.4",
@@ -601,6 +661,7 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
         skipBuild: Option.none(),
         keepStage: Option.none(),
         signed: Option.none(),
+        localBuild: Option.none(),
         verbose: Option.none(),
         mockUpdates: Option.none(),
         mockUpdateServerPort: Option.none(),
@@ -625,6 +686,48 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
       assert.equal(resolved.platform, "win");
       assert.equal(resolved.target, "nsis");
       assert.equal(resolved.arch, "arm64");
+      // Unsigned build without a configured update repository defaults to local.
+      assert.equal(resolved.localBuild, true);
+    }),
+  );
+
+  it.effect("keeps the release identity for unsigned builds inside a release context", () =>
+    Effect.gen(function* () {
+      const makeInput = (localBuild: Option.Option<boolean>) => ({
+        platform: Option.some("mac" as const),
+        target: Option.none<string>(),
+        arch: Option.some("arm64" as const),
+        buildVersion: Option.none<string>(),
+        outputDir: Option.none<string>(),
+        skipBuild: Option.none<boolean>(),
+        keepStage: Option.none<boolean>(),
+        signed: Option.none<boolean>(),
+        localBuild,
+        verbose: Option.none<boolean>(),
+        mockUpdates: Option.none<boolean>(),
+        mockUpdateServerPort: Option.none<number>(),
+        wslPrebuild: Option.none<string>(),
+      });
+      const releaseEnvLayer = ConfigProvider.layer(
+        ConfigProvider.fromEnv({ env: { GITHUB_REPOSITORY: "pingdotgg/t3code" } }),
+      );
+
+      const inReleaseContext = yield* resolveBuildOptions(makeInput(Option.none())).pipe(
+        Effect.provide(releaseEnvLayer),
+      );
+      assert.equal(inReleaseContext.localBuild, false);
+
+      const explicitLocal = yield* resolveBuildOptions(makeInput(Option.some(true))).pipe(
+        Effect.provide(releaseEnvLayer),
+      );
+      assert.equal(explicitLocal.localBuild, true);
+
+      const signedBuild = yield* resolveBuildOptions(makeInput(Option.none())).pipe(
+        Effect.provide(
+          ConfigProvider.layer(ConfigProvider.fromEnv({ env: { T3CODE_DESKTOP_SIGNED: "true" } })),
+        ),
+      );
+      assert.equal(signedBuild.localBuild, false);
     }),
   );
 
@@ -639,6 +742,7 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
         skipBuild: Option.some(false),
         keepStage: Option.some(false),
         signed: Option.some(false),
+        localBuild: Option.some(false),
         verbose: Option.some(false),
         mockUpdates: Option.some(false),
         mockUpdateServerPort: Option.none(),
@@ -662,6 +766,7 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
       assert.equal(resolved.skipBuild, false);
       assert.equal(resolved.keepStage, false);
       assert.equal(resolved.signed, false);
+      assert.equal(resolved.localBuild, false);
       assert.equal(resolved.verbose, false);
       assert.equal(resolved.mockUpdates, false);
     }),

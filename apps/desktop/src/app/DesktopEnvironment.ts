@@ -7,9 +7,11 @@ import type {
 import * as Config from "effect/Config";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
+import * as Schema from "effect/Schema";
 
 import * as DesktopAppSettings from "../settings/DesktopAppSettings.ts";
 import * as DesktopConfig from "./DesktopConfig.ts";
@@ -66,6 +68,7 @@ export class DesktopEnvironment extends Context.Service<
     readonly appUserModelId: string;
     readonly linuxDesktopEntryName: string;
     readonly linuxWmClass: string;
+    readonly isLocalBuild: boolean;
     readonly userDataDirName: string;
     readonly legacyUserDataDirName: string;
     readonly defaultDesktopSettings: DesktopAppSettings.DesktopSettings;
@@ -80,10 +83,14 @@ const APP_BASE_NAME = "T3 Code";
 
 function resolveDesktopAppStageLabel(input: {
   readonly isDevelopment: boolean;
+  readonly isLocalBuild: boolean;
   readonly appVersion: string;
 }): DesktopAppStageLabel {
   if (input.isDevelopment) {
     return "Dev";
+  }
+  if (input.isLocalBuild) {
+    return "Local";
   }
 
   return isNightlyDesktopVersion(input.appVersion) ? "Nightly" : "Alpha";
@@ -91,6 +98,7 @@ function resolveDesktopAppStageLabel(input: {
 
 function resolveDesktopAppBranding(input: {
   readonly isDevelopment: boolean;
+  readonly isLocalBuild: boolean;
   readonly appVersion: string;
 }): DesktopAppBranding {
   const stageLabel = resolveDesktopAppStageLabel(input);
@@ -100,6 +108,29 @@ function resolveDesktopAppBranding(input: {
     displayName: `${APP_BASE_NAME} (${stageLabel})`,
   };
 }
+
+// Packaged local builds (scripts/build-desktop-artifact.ts --local) mark their app
+// package.json with `t3codeLocalBuild: true`. The marker travels inside the artifact,
+// so the identity decision is baked into the build instead of guessed at runtime.
+const AppPackageBuildMetadata = Schema.fromJsonString(
+  Schema.Struct({ t3codeLocalBuild: Schema.optional(Schema.Boolean) }),
+);
+const decodeAppPackageBuildMetadata = Schema.decodeEffect(AppPackageBuildMetadata);
+
+const readPackagedLocalBuildMarker = Effect.fn("desktop.environment.readLocalBuildMarker")(
+  function* (packageJsonPath: string): Effect.fn.Return<boolean, never, FileSystem.FileSystem> {
+    const fs = yield* FileSystem.FileSystem;
+    const raw = yield* fs.readFileString(packageJsonPath).pipe(Effect.option);
+    return yield* Option.match(raw, {
+      onNone: () => Effect.succeed(false),
+      onSome: (value) =>
+        decodeAppPackageBuildMetadata(value).pipe(
+          Effect.map((parsed) => parsed.t3codeLocalBuild === true),
+          Effect.orElseSucceed(() => false),
+        ),
+    });
+  },
+);
 
 function normalizeDesktopArch(arch: string): DesktopRuntimeArch {
   if (arch === "arm64") return "arm64";
@@ -133,7 +164,11 @@ function resolveDesktopRuntimeInfo(input: {
 
 const make = Effect.fn("desktop.environment.make")(function* (
   input: MakeDesktopEnvironmentInput,
-): Effect.fn.Return<DesktopEnvironment["Service"], Config.ConfigError, Path.Path> {
+): Effect.fn.Return<
+  DesktopEnvironment["Service"],
+  Config.ConfigError,
+  FileSystem.FileSystem | Path.Path
+> {
   const path = yield* Path.Path;
   const config = yield* DesktopConfig.DesktopConfig;
   const homeDirectory = input.homeDirectory;
@@ -148,11 +183,24 @@ const make = Effect.fn("desktop.environment.make")(function* (
         ? path.join(homeDirectory, "Library", "Application Support")
         : Option.getOrElse(config.xdgConfigHome, () => path.join(homeDirectory, ".config"));
   const configuredBaseDir = config.t3Home;
-  const baseDir = Option.getOrElse(configuredBaseDir, () => path.join(homeDirectory, ".t3"));
   const rootDir = path.resolve(input.dirname, "../../..");
   const appRoot = input.isPackaged ? input.appPath : rootDir;
+  // Non-dev runs that are not the released app (repo `start:desktop`, smoke tests,
+  // and packaged artifacts carrying the local-build marker) get a separate "Local"
+  // identity. Sharing the release identity breaks side-by-side use: the Chromium
+  // singleton lock in the shared userData dir makes requestSingleInstanceLock()
+  // fail while the installed app runs, so the local instance quits immediately,
+  // and a shared ~/.t3 would let two backends race on the same state.
+  const isLocalBuild =
+    !isDevelopment &&
+    (!input.isPackaged ||
+      (yield* readPackagedLocalBuildMarker(path.join(appRoot, "package.json"))));
+  const baseDir = Option.getOrElse(configuredBaseDir, () =>
+    path.join(homeDirectory, isLocalBuild ? ".t3-local" : ".t3"),
+  );
   const branding = resolveDesktopAppBranding({
     isDevelopment,
+    isLocalBuild,
     appVersion: input.appVersion,
   });
   const displayName = branding.displayName;
@@ -160,8 +208,12 @@ const make = Effect.fn("desktop.environment.make")(function* (
     baseDir,
     isDevelopment && Option.isNone(configuredBaseDir) ? "dev" : "userdata",
   );
-  const userDataDirName = isDevelopment ? "t3code-dev" : "t3code";
-  const legacyUserDataDirName = isDevelopment ? "T3 Code (Dev)" : "T3 Code (Alpha)";
+  const userDataDirName = isDevelopment ? "t3code-dev" : isLocalBuild ? "t3code-local" : "t3code";
+  const legacyUserDataDirName = isDevelopment
+    ? "T3 Code (Dev)"
+    : isLocalBuild
+      ? "T3 Code (Local)"
+      : "T3 Code (Alpha)";
   const resourcesPath = input.resourcesPath;
 
   return DesktopEnvironment.of({
@@ -201,10 +253,19 @@ const make = Effect.fn("desktop.environment.make")(function* (
     branding,
     displayName,
     appUserModelId: Option.getOrElse(config.appUserModelIdOverride, () =>
-      isDevelopment ? "com.t3tools.t3code.dev" : "com.t3tools.t3code",
+      isDevelopment
+        ? "com.t3tools.t3code.dev"
+        : isLocalBuild
+          ? "com.t3tools.t3code.local"
+          : "com.t3tools.t3code",
     ),
-    linuxDesktopEntryName: isDevelopment ? "t3code-dev.desktop" : "t3code.desktop",
-    linuxWmClass: isDevelopment ? "t3code-dev" : "t3code",
+    linuxDesktopEntryName: isDevelopment
+      ? "t3code-dev.desktop"
+      : isLocalBuild
+        ? "t3code-local.desktop"
+        : "t3code.desktop",
+    linuxWmClass: isDevelopment ? "t3code-dev" : isLocalBuild ? "t3code-local" : "t3code",
+    isLocalBuild,
     userDataDirName,
     legacyUserDataDirName,
     defaultDesktopSettings: DesktopAppSettings.resolveDefaultDesktopSettings(input.appVersion),
