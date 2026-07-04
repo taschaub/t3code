@@ -71,17 +71,20 @@ function Alert({
       role="alert"
       {...props}
     >
-      <div className="flex items-center gap-2">
+      {/* flex-wrap + grow/basis on the content lets wide action buttons drop
+          onto their own row on narrow (mobile) screens instead of crushing
+          the title/description into a sliver. */}
+      <div className="flex flex-wrap items-center gap-2">
         {icon.length > 0 && (
           <div className="flex size-4 shrink-0 items-center justify-center [&>svg]:size-full">
             {icon}
           </div>
         )}
         {content.length > 0 && (
-          <div className="flex min-w-0 flex-1 flex-col gap-0.5">{content}</div>
+          <div className="flex min-w-0 grow basis-40 flex-col gap-0.5">{content}</div>
         )}
         {action.length > 0 && (
-          <div className="flex shrink-0 items-center self-center">{action}</div>
+          <div className="ms-auto flex max-w-full shrink-0 items-center self-center">{action}</div>
         )}
       </div>
     </div>
@@ -89,7 +92,11 @@ function Alert({
 }
 
 function AlertTitle({ className, ...props }: React.ComponentProps<"div">) {
-  return <div className={cn("font-medium", className)} data-slot="alert-title" {...props} />;
+  // break-words: titles can contain long unbreakable tokens (branch names,
+  // versions) that would otherwise overflow on narrow screens.
+  return (
+    <div className={cn("break-words font-medium", className)} data-slot="alert-title" {...props} />
+  );
 }
 
 function AlertDescription({ className, ...props }: React.ComponentProps<"div">) {
@@ -103,7 +110,15 @@ function AlertDescription({ className, ...props }: React.ComponentProps<"div">) 
 }
 
 function AlertAction({ className, ...props }: React.ComponentProps<"div">) {
-  return <div className={cn("flex gap-1", className)} data-slot="alert-action" {...props} />;
+  // flex-wrap so multiple action buttons stack instead of overflowing when
+  // the alert is rendered at mobile widths.
+  return (
+    <div
+      className={cn("flex flex-wrap justify-end gap-1", className)}
+      data-slot="alert-action"
+      {...props}
+    />
+  );
 }
 
 AlertTitle.displayName = "AlertTitle";
