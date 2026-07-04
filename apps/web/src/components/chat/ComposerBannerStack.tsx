@@ -159,21 +159,13 @@ function ComposerBannerStackAlert({
   readonly exiting: boolean;
   readonly onDismissRequest: () => void;
 }) {
-  const dismissOnly = item.onDismiss && !item.actions;
-
   return (
     <Alert variant={item.variant}>
       {item.icon}
       <AlertTitle>{item.title}</AlertTitle>
       {item.description ? <AlertDescription>{item.description}</AlertDescription> : null}
       {item.actions || item.onDismiss ? (
-        <AlertAction
-          className={
-            dismissOnly
-              ? "max-sm:col-start-3 max-sm:row-start-1 max-sm:mt-0 max-sm:self-start"
-              : undefined
-          }
-        >
+        <AlertAction>
           {item.actions}
           {item.onDismiss ? (
             <Button

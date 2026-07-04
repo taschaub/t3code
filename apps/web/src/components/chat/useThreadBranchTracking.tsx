@@ -159,20 +159,24 @@ export function useThreadBranchTracking(input: UseThreadBranchTrackingInput): {
         "Continuing now would run the agent against a different branch. Switch the working tree, or relink this chat to the current branch.",
       actions: (
         <>
+          {/* max-w-full + truncate keep long branch names from pushing the
+              buttons past the alert edge on narrow (mobile) screens. */}
           <Button
             size="xs"
+            className="max-w-full"
             disabled={isActionPending}
             onClick={() => void handleCheckout(mismatch)}
           >
-            Checkout {mismatch.threadBranch}
+            <span className="truncate">Checkout {mismatch.threadBranch}</span>
           </Button>
           <Button
             size="xs"
             variant="outline"
+            className="max-w-full"
             disabled={isActionPending}
             onClick={() => void handleRelink(mismatch)}
           >
-            Relink to {mismatch.currentBranch}
+            <span className="truncate">Relink to {mismatch.currentBranch}</span>
           </Button>
         </>
       ),
