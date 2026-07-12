@@ -4573,8 +4573,11 @@ function ChatViewContent(props: ChatViewProps) {
       setEditMessageTarget(null);
       const accepted = await performCheckpointRevert(target.turnCount, { restoreFiles });
       if (!accepted) return;
+      // insertTextAtEnd already schedules editor focus for the next frame.
+      // Calling focusAtEnd() synchronously here would replay the editor's
+      // stale (still empty) snapshot through onChange and wipe the draft
+      // before React syncs the inserted text into the editor.
       composerRef.current?.insertTextAtEnd(target.text);
-      composerRef.current?.focusAtEnd();
     },
     [composerRef, editMessageTarget, performCheckpointRevert],
   );

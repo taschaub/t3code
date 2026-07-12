@@ -12,7 +12,7 @@ import type {
   OrchestrationThreadActivity,
   TurnId,
 } from "@t3tools/contracts";
-import { applyRedoSlices } from "@t3tools/shared/threadRedo";
+import { applyRedoSlices, retainMessagesAfterRevert } from "@t3tools/shared/threadRedo";
 
 export type ThreadDetailReducerResult =
   | { readonly kind: "updated"; readonly thread: OrchestrationThread }
@@ -470,8 +470,10 @@ export function applyThreadDetailEvent(
         Arr.sort(checkpointOrder),
       );
 
-      const retainedTurnIds = new Set(Arr.map(checkpoints, (entry) => entry.turnId));
-      const messages = retainMessagesAfterRevert(thread.messages, retainedTurnIds);
+      const retainedTurnIds = new Set<string>(Arr.map(checkpoints, (entry) => entry.turnId));
+      const messages = [
+        ...retainMessagesAfterRevert(thread.messages, retainedTurnIds, event.payload.turnCount),
+      ];
       const proposedPlans = pipe(
         thread.proposedPlans,
         Arr.filter((plan) => plan.turnId === null || retainedTurnIds.has(plan.turnId)),
@@ -616,21 +618,4 @@ function rebindCheckpointAssistantMessage(
   return Arr.map(checkpoints, (entry) =>
     entry.turnId === turnId ? { ...entry, assistantMessageId: messageId } : entry,
   );
-}
-
-function retainMessagesAfterRevert(
-  messages: ReadonlyArray<OrchestrationMessage>,
-  retainedTurnIds: ReadonlySet<string>,
-): OrchestrationMessage[] {
-  // Keep messages that belong to a retained turn, plus system messages and
-  // messages without a turn binding (pre-turn-0 user messages).
-  return Arr.filter(messages, (message) => {
-    if (message.role === "system") {
-      return true;
-    }
-    if (message.turnId === null) {
-      return true;
-    }
-    return retainedTurnIds.has(message.turnId);
-  });
 }
