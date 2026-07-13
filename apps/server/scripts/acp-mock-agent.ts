@@ -37,6 +37,12 @@ const emitStaleXAiPromptCompleteBeforeSecondHang =
 const emitOverlappingXAiPromptCompleteOutOfOrder =
   process.env.T3_ACP_EMIT_OVERLAPPING_XAI_PROMPT_COMPLETE_OUT_OF_ORDER === "1";
 const failPrompt = process.env.T3_ACP_FAIL_PROMPT === "1";
+// First N prompts fail with a transient network error signature (as produced
+// by the Cursor CLI when its backend connection dies); later prompts succeed.
+const failPromptRetriableCount = Number(process.env.T3_ACP_FAIL_PROMPT_RETRIABLE_COUNT ?? "0");
+// Emit an assistant chunk before the retriable failure so the client sees
+// turn activity (mid-stream connection drop instead of send failure).
+const emitChunkBeforeRetriableFail = process.env.T3_ACP_EMIT_CHUNK_BEFORE_RETRIABLE_FAIL === "1";
 const failSetConfigOption = process.env.T3_ACP_FAIL_SET_CONFIG_OPTION === "1";
 const exitOnSetConfigOption = process.env.T3_ACP_EXIT_ON_SET_CONFIG_OPTION === "1";
 const promptResponseText = process.env.T3_ACP_PROMPT_RESPONSE_TEXT;
@@ -464,6 +470,21 @@ const program = Effect.gen(function* () {
 
       if (failPrompt) {
         return yield* AcpError.AcpRequestError.internalError("Mock prompt failure");
+      }
+
+      if (promptCount <= failPromptRetriableCount) {
+        if (emitChunkBeforeRetriableFail) {
+          yield* agent.client.sessionUpdate({
+            sessionId: requestedSessionId,
+            update: {
+              sessionUpdate: "agent_message_chunk",
+              content: { type: "text", text: "partial before connection drop" },
+            },
+          });
+        }
+        return yield* AcpError.AcpRequestError.internalError(
+          "RetriableError: [unavailable] PING timed out",
+        );
       }
 
       if (emitStaleXAiPromptCompleteBeforeSecondHang && promptCount === 1) {

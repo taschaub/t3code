@@ -24,6 +24,7 @@ import {
 import * as DateTime from "effect/DateTime";
 import * as Crypto from "effect/Crypto";
 import * as Deferred from "effect/Deferred";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
@@ -50,6 +51,7 @@ import {
   ProviderAdapterValidationError,
 } from "../Errors.ts";
 import { acpPermissionOutcome, mapAcpToAdapterError } from "../acp/AcpAdapterSupport.ts";
+import { promptWithNetworkRetry, type AcpPromptNetworkRetryPolicy } from "../acp/AcpPromptRetry.ts";
 import type * as AcpSessionRuntime from "../acp/AcpSessionRuntime.ts";
 import {
   makeAcpAssistantItemEvent,
@@ -111,6 +113,12 @@ export interface CursorAdapterLiveOptions {
    * the latest snapshot so the closure isn't stale.
    */
   readonly resolveSettings?: Effect.Effect<CursorSettings>;
+  /**
+   * Retry policy for transient network failures during `session/prompt`.
+   * Production uses the defaults; tests override `baseDelay` to zero so
+   * retries do not stall the TestClock.
+   */
+  readonly promptRetryPolicy?: AcpPromptNetworkRetryPolicy;
 }
 
 interface PendingApproval {
@@ -137,6 +145,13 @@ interface CursorSessionContext {
    * >0 means a turn is actively running, so a new sendTurn is a steer that
    * continues it, and only the last remaining prompt settles the turn. */
   promptsInFlight: number;
+  /** Monotonic count of streamed session activity (chunks, tool calls, ...).
+   * The prompt network retry compares snapshots of this counter to decide
+   * whether a failed prompt already reached the provider. */
+  activityCount: number;
+  /** Set by interruptTurn so a pending network retry stops instead of
+   * resuming a turn the user just cancelled. */
+  cancelRequested: boolean;
   stopped: boolean;
 }
 
@@ -455,6 +470,17 @@ export function makeCursorAdapter(
       }
       return Effect.succeed(ctx);
     };
+
+    // Waits until the notification fiber has published every queued session
+    // update. Racing against the fiber keeps this from hanging when the
+    // session is torn down mid-turn and nobody can acknowledge the barrier.
+    const drainSessionEvents = (ctx: CursorSessionContext) =>
+      ctx.notificationFiber
+        ? Effect.raceFirst(
+            ctx.acp.drainEvents,
+            Fiber.await(ctx.notificationFiber).pipe(Effect.asVoid),
+          )
+        : Effect.void;
 
     const stopSessionInternal = (ctx: CursorSessionContext) =>
       Effect.gen(function* () {
@@ -778,12 +804,19 @@ export function makeCursorAdapter(
             lastPlanFingerprint: undefined,
             activeTurnId: undefined,
             promptsInFlight: 0,
+            activityCount: 0,
+            cancelRequested: false,
             stopped: false,
           };
 
           const nf = yield* Stream.runDrain(
             Stream.mapEffect(acp.getEvents(), (event) =>
               Effect.gen(function* () {
+                // Everything except barriers and mode flips counts as provider
+                // activity for the prompt network retry classification.
+                if (event._tag !== "EventStreamBarrier" && event._tag !== "ModeChanged") {
+                  ctx.activityCount += 1;
+                }
                 switch (event._tag) {
                   case "EventStreamBarrier":
                     yield* Deferred.succeed(event.acknowledge, undefined);
@@ -922,6 +955,8 @@ export function makeCursorAdapter(
         // resolving from here on does not settle the turn; the matching
         // decrement is the `ensuring` below.
         ctx.promptsInFlight += 1;
+        // A fresh prompt supersedes any earlier cancel request.
+        ctx.cancelRequested = false;
 
         return yield* Effect.gen(function* () {
           const turnModelSelection =
@@ -1007,29 +1042,54 @@ export function makeCursorAdapter(
             });
           }
 
-          const result = yield* ctx.acp
-            .prompt({
-              prompt: promptParts,
-            })
-            .pipe(
-              Effect.mapError((error) =>
-                mapAcpToAdapterError(PROVIDER, input.threadId, "session/prompt", error),
+          // Transient network failures between the Cursor CLI and its backend
+          // (e.g. "RetriableError: [unavailable] PING timed out") fail the
+          // prompt RPC even though the session and all completed work survive.
+          // Retry automatically instead of failing the turn.
+          const result = yield* promptWithNetworkRetry({
+            originalPrompt: promptParts,
+            sendPrompt: (prompt) => ctx.acp.prompt({ prompt }),
+            // Drain queued session updates first so chunks that raced ahead of
+            // the failure are counted before the resend decision.
+            observedActivityCount: drainSessionEvents(ctx).pipe(
+              Effect.map(() => ctx.activityCount),
+            ),
+            shouldAbort: Effect.sync(() => ctx.stopped || ctx.cancelRequested),
+            // The warning is best-effort diagnostics; never block the retry.
+            onRetry: (attempt) =>
+              makeEventStamp().pipe(
+                Effect.flatMap((stamp) =>
+                  offerRuntimeEvent({
+                    type: "runtime.warning",
+                    ...stamp,
+                    provider: PROVIDER,
+                    threadId: input.threadId,
+                    turnId,
+                    payload: {
+                      message: `Cursor connection dropped — retrying turn (${attempt.retry}/${attempt.maxRetries}).`,
+                      detail: {
+                        error: attempt.error.message,
+                        resend: attempt.resend,
+                        delayMs: Duration.toMillis(attempt.delay),
+                      },
+                    },
+                  }),
+                ),
+                Effect.ignore,
               ),
-            );
+            ...(options?.promptRetryPolicy ? { policy: options.promptRetryPolicy } : {}),
+          }).pipe(
+            Effect.mapError((error) =>
+              mapAcpToAdapterError(PROVIDER, input.threadId, "session/prompt", error),
+            ),
+          );
 
           // The prompt RPC can resolve while session/update notifications are
           // still queued. Wait until the notification fiber has published all
           // of them so content deltas and item completions reach consumers
           // before turn.completed (otherwise buffered assistant text may be
-          // finalized against the wrong turn state). Racing against the
-          // notification fiber keeps this from hanging when the session is
-          // torn down mid-turn and nobody can acknowledge the drain barrier.
-          yield* ctx.notificationFiber
-            ? Effect.raceFirst(
-                ctx.acp.drainEvents,
-                Fiber.await(ctx.notificationFiber).pipe(Effect.asVoid),
-              )
-            : Effect.void;
+          // finalized against the wrong turn state).
+          yield* drainSessionEvents(ctx);
 
           // The notification fiber also terminates when stopSessionInternal
           // interrupts it during teardown, which settles the race without the
@@ -1092,6 +1152,9 @@ export function makeCursorAdapter(
     const interruptTurn: CursorAdapterShape["interruptTurn"] = (threadId) =>
       Effect.gen(function* () {
         const ctx = yield* requireSession(threadId);
+        // Stop any pending prompt network retry: the user asked to cancel,
+        // so the turn must not be resumed automatically.
+        ctx.cancelRequested = true;
         yield* settlePendingApprovalsAsCancelled(ctx.pendingApprovals);
         yield* settlePendingUserInputsAsEmptyAnswers(ctx.pendingUserInputs);
         yield* Effect.ignore(
