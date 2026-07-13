@@ -27,6 +27,7 @@ import {
 
 import { ServerConfig } from "../../config.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
+import { CONTINUE_AFTER_NETWORK_ERROR_PROMPT } from "../acp/AcpPromptRetry.ts";
 import type { CursorAdapterShape } from "../Services/CursorAdapter.ts";
 import { makeCursorAdapter } from "./CursorAdapter.ts";
 const decodeCursorSettings = Schema.decodeSync(CursorSettings);
@@ -154,7 +155,11 @@ const cursorAdapterTestLayer = it.layer(
     Effect.gen(function* () {
       const cursorConfig = decodeCursorSettings({});
       const resolveSettings = yield* makeResolveCursorSettings;
-      return yield* makeCursorAdapter(cursorConfig, { resolveSettings });
+      return yield* makeCursorAdapter(cursorConfig, {
+        resolveSettings,
+        // Zero delay so prompt network retries don't stall the TestClock.
+        promptRetryPolicy: { baseDelay: 0 },
+      });
     }),
   ).pipe(
     Layer.provideMerge(ServerSettingsService.layerTest()),
@@ -247,6 +252,109 @@ cursorAdapterTestLayer("CursorAdapterLive", (it) => {
           { step: "Implement the requested change", status: "inProgress" },
         ]);
       }
+
+      yield* adapter.stopSession(threadId);
+    }),
+  );
+
+  it.effect("retries the prompt after a transient network failure and completes the turn", () =>
+    Effect.gen(function* () {
+      const adapter = yield* CursorAdapter;
+      const settings = yield* ServerSettingsService;
+      const threadId = ThreadId.make("cursor-network-retry-thread");
+
+      // First prompt fails like a dropped Cursor backend connection
+      // ("RetriableError: [unavailable] PING timed out"), second succeeds.
+      const wrapperPath = yield* Effect.promise(() =>
+        makeMockAgentWrapper({ T3_ACP_FAIL_PROMPT_RETRIABLE_COUNT: "1" }),
+      );
+      yield* settings.updateSettings({ providers: { cursor: { binaryPath: wrapperPath } } });
+
+      const runtimeEventsFiber = yield* adapter.streamEvents.pipe(
+        Stream.filter((event) => event.threadId === threadId),
+        Stream.takeUntil((event) => event.type === "turn.completed"),
+        Stream.runCollect,
+        Effect.forkChild,
+      );
+
+      yield* adapter.startSession({
+        threadId,
+        provider: ProviderDriverKind.make("cursor"),
+        cwd: process.cwd(),
+        runtimeMode: "full-access",
+        modelSelection: { instanceId: ProviderInstanceId.make("cursor"), model: "default" },
+      });
+
+      yield* adapter.sendTurn({
+        threadId,
+        input: "hello retry",
+        attachments: [],
+      });
+
+      const runtimeEvents = Array.from(yield* Fiber.join(runtimeEventsFiber));
+
+      const warning = runtimeEvents.find((event) => event.type === "runtime.warning");
+      assert.isDefined(warning);
+      if (warning?.type === "runtime.warning") {
+        assert.match(warning.payload.message, /retrying turn \(1\/2\)/);
+      }
+
+      const completed = runtimeEvents.find((event) => event.type === "turn.completed");
+      assert.isDefined(completed);
+      if (completed?.type === "turn.completed") {
+        assert.equal(completed.payload.state, "completed");
+      }
+
+      yield* adapter.stopSession(threadId);
+    }),
+  );
+
+  it.effect("resumes with a continue nudge when the connection dropped mid-stream", () =>
+    Effect.gen(function* () {
+      const adapter = yield* CursorAdapter;
+      const serverSettings = yield* ServerSettingsService;
+      const threadId = ThreadId.make("cursor-network-retry-nudge-thread");
+      const tempDir = yield* Effect.promise(() =>
+        NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "cursor-acp-")),
+      );
+      const requestLogPath = NodePath.join(tempDir, "requests.ndjson");
+      const argvLogPath = NodePath.join(tempDir, "argv.txt");
+      yield* Effect.promise(() => NodeFSP.writeFile(requestLogPath, "", "utf8"));
+      // The failing prompt emits an assistant chunk first, so the provider
+      // demonstrably received the prompt before the "connection" died.
+      const wrapperPath = yield* Effect.promise(() =>
+        makeProbeWrapper(requestLogPath, argvLogPath, {
+          T3_ACP_FAIL_PROMPT_RETRIABLE_COUNT: "1",
+          T3_ACP_EMIT_CHUNK_BEFORE_RETRIABLE_FAIL: "1",
+        }),
+      );
+      yield* serverSettings.updateSettings({ providers: { cursor: { binaryPath: wrapperPath } } });
+
+      yield* adapter.startSession({
+        threadId,
+        provider: ProviderDriverKind.make("cursor"),
+        cwd: process.cwd(),
+        runtimeMode: "full-access",
+        modelSelection: { instanceId: ProviderInstanceId.make("cursor"), model: "default" },
+      });
+
+      yield* adapter.sendTurn({
+        threadId,
+        input: "task that gets interrupted",
+        attachments: [],
+      });
+
+      const requests = yield* Effect.promise(() => readJsonLines(requestLogPath));
+      const promptTexts = requests.flatMap((entry) => {
+        if (entry.method !== "session/prompt") {
+          return [];
+        }
+        const params = entry.params as { prompt?: Array<{ text?: string }> } | undefined;
+        return [params?.prompt?.[0]?.text];
+      });
+      assert.lengthOf(promptTexts, 2);
+      assert.equal(promptTexts[0], "task that gets interrupted");
+      assert.equal(promptTexts[1], CONTINUE_AFTER_NETWORK_ERROR_PROMPT);
 
       yield* adapter.stopSession(threadId);
     }),
