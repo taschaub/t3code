@@ -67,7 +67,6 @@ import {
 import * as Cause from "effect/Cause";
 import { AsyncResult } from "effect/unstable/reactivity";
 import { isElectron } from "../env";
-import { readLocalApi } from "../localApi";
 import { useDiffPanelStore } from "../diffPanelStore";
 import {
   collapseExpandedComposerCursor,
@@ -5985,10 +5984,16 @@ function ChatViewContent(props: ChatViewProps) {
                           activeProjectTitle={activeProject?.title ?? null}
                         />
                       </div>
-                      <ComposerBannerStack className="relative z-0" items={composerBannerItemsWithRedo} />
+                      <ComposerBannerStack
+                        className="relative z-0"
+                        items={composerBannerItemsWithRedo}
+                      />
                     </div>
                   ) : (
-                    <ComposerBannerStack className="relative z-0" items={composerBannerItemsWithRedo} />
+                    <ComposerBannerStack
+                      className="relative z-0"
+                      items={composerBannerItemsWithRedo}
+                    />
                   )}
                   <div
                     className="relative"

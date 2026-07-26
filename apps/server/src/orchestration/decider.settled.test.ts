@@ -50,6 +50,7 @@ function makeReadModel(
         activities,
         checkpoints: [],
         session,
+        redo: null,
       },
     ],
     updatedAt: NOW,
