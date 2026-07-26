@@ -55,6 +55,7 @@ function makeReadModel(input: {
         activities: input.activities ?? [],
         checkpoints: [],
         session: null,
+        redo: null,
       },
     ],
     updatedAt: NOW,
