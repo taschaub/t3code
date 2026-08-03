@@ -739,7 +739,14 @@ function toDerivedWorkLogEntry(activity: OrchestrationThreadActivity): DerivedWo
   if (itemType === "mcp_tool_call") {
     const data = asRecord(payload?.data);
     if (data?.item !== undefined) {
+      // Codex nests the MCP call under `data.item`.
       entry.toolData = data.item;
+    } else if (data) {
+      // ACP agents (Cursor/Grok) put the MCP payload directly on `data`.
+      const acpMcpData = extractAcpMcpToolData(data);
+      if (acpMcpData) {
+        entry.toolData = acpMcpData;
+      }
     }
   }
   if (itemType) {
@@ -882,6 +889,20 @@ function toLatestProposedPlanState(proposedPlan: ProposedPlan): LatestProposedPl
 
 function asRecord(value: unknown): Record<string, unknown> | null {
   return value && typeof value === "object" ? (value as Record<string, unknown>) : null;
+}
+
+// Pull the inspectable fields out of an ACP MCP tool call's `data` record so the
+// timeline can show what the agent forwarded (args in `rawInput`, result in
+// `rawOutput`/`content`). Cursor currently forwards very little, but any agent
+// that forwards more will surface here without further changes.
+function extractAcpMcpToolData(data: Record<string, unknown>): Record<string, unknown> | null {
+  const details: Record<string, unknown> = {};
+  for (const key of ["rawInput", "rawOutput", "content", "locations"] as const) {
+    if (data[key] !== undefined) {
+      details[key] = data[key];
+    }
+  }
+  return Object.keys(details).length > 0 ? details : null;
 }
 
 function asTrimmedString(value: unknown): string | null {

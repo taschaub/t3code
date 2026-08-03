@@ -255,6 +255,53 @@ describe("AcpRuntimeModel", () => {
     }
   });
 
+  it("classifies Cursor MCP tool calls as mcp_tool_call and keeps it across updates", () => {
+    // Exact shape the Cursor CLI emits for an MCP tool call: a generic title,
+    // kind "other", and no forwarded tool name/args.
+    const created = parseSessionUpdateEvent({
+      sessionId: "session-1",
+      update: {
+        sessionUpdate: "tool_call",
+        toolCallId: "toolu_mcp",
+        title: "MCP: tool",
+        kind: "other",
+        status: "pending",
+        rawInput: {},
+      },
+    } satisfies EffectAcpSchema.SessionNotification);
+
+    const createdEvent = created.events[0];
+    expect(createdEvent?._tag).toBe("ToolCallUpdated");
+    if (createdEvent?._tag !== "ToolCallUpdated") return;
+    expect(createdEvent.toolCall.itemType).toBe("mcp_tool_call");
+    // The generic placeholder title is relabeled to something readable.
+    expect(createdEvent.toolCall.title).toBe("MCP tool call");
+
+    // The completion update carries no title/kind, so it must not lose the
+    // MCP classification when merged.
+    const completed = parseSessionUpdateEvent({
+      sessionId: "session-1",
+      update: {
+        sessionUpdate: "tool_call_update",
+        toolCallId: "toolu_mcp",
+        status: "completed",
+        rawOutput: { success: true },
+      },
+    } satisfies EffectAcpSchema.SessionNotification);
+    const completedEvent = completed.events[0];
+    expect(completedEvent?._tag).toBe("ToolCallUpdated");
+    if (completedEvent?._tag !== "ToolCallUpdated") return;
+
+    const merged = mergeToolCallState(createdEvent.toolCall, completedEvent.toolCall);
+    expect(merged).toMatchObject({
+      toolCallId: "toolu_mcp",
+      itemType: "mcp_tool_call",
+      title: "MCP tool call",
+      status: "completed",
+    });
+    expect(merged.data).toMatchObject({ rawOutput: { success: true } });
+  });
+
   it("trims padded current mode updates before emitting a mode change", () => {
     const result = parseSessionUpdateEvent({
       sessionId: "session-1",

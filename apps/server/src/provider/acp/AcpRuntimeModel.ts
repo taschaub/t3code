@@ -63,6 +63,10 @@ export interface AcpToolCallState {
   readonly status?: "pending" | "inProgress" | "completed" | "failed";
   readonly command?: string;
   readonly detail?: string;
+  // Canonical UI item type. Normally derived from the ACP `kind`, but MCP tool
+  // calls are detected explicitly (see `makeToolCallState`) so the web renders
+  // them with the wrench icon and an expandable raw-payload body.
+  readonly itemType?: ToolLifecycleItemType;
   readonly data: Record<string, unknown>;
 }
 
@@ -317,6 +321,19 @@ function canonicalItemTypeFromAcpToolKind(kind: string | undefined): ToolLifecyc
   }
 }
 
+// The Cursor CLI's ACP bridge labels every MCP tool call with a generic
+// "MCP: tool" title and kind "other". We use that signal to tag the call as an
+// MCP call so the UI can render it distinctly instead of as a nameless tool.
+function isAcpMcpToolTitle(title: string | undefined): boolean {
+  return title !== undefined && /^mcp\b/iu.test(title.trim());
+}
+
+// True only for the fully generic placeholder title (no real tool name). We
+// relabel these to a clearer "MCP tool call" but keep any richer title as-is.
+function isGenericAcpMcpTitle(title: string | undefined): boolean {
+  return title !== undefined && /^mcp:?\s*tool$/iu.test(title.trim());
+}
+
 function makeToolCallState(
   input: {
     readonly toolCallId: string;
@@ -380,10 +397,19 @@ function makeToolCallState(
       })
     : undefined;
   const status = normalizeToolCallStatus(input.status, options?.fallbackStatus);
+  // Detect MCP tool calls up front. Cursor sends kind "other" (or omits it) with
+  // an "MCP…" title. We only set itemType on the initial `tool_call` that carries
+  // the title; later `tool_call_update`s have no title, so leaving itemType
+  // undefined there lets `mergeToolCallState` keep the MCP classification.
+  const isMcpToolCall = (kind === undefined || kind === "other") && isAcpMcpToolTitle(title);
+  const itemType: ToolLifecycleItemType | undefined = isMcpToolCall ? "mcp_tool_call" : undefined;
+  const summary =
+    isMcpToolCall && isGenericAcpMcpTitle(title) ? "MCP tool call" : presentation?.summary;
   return {
     toolCallId,
     ...(kind ? { kind } : {}),
-    ...(presentation?.summary ? { title: presentation.summary } : {}),
+    ...(summary ? { title: summary } : {}),
+    ...(itemType ? { itemType } : {}),
     ...(status ? { status } : {}),
     ...(command ? { command } : {}),
     ...(presentation?.detail ? { detail: presentation.detail } : {}),
@@ -422,10 +448,14 @@ export function mergeToolCallState(
   const status = next.status ?? previous?.status;
   const command = next.command ?? previous?.command;
   const detail = next.detail ?? previous?.detail;
+  // Keep the MCP classification from the initial tool_call: later updates omit
+  // the title, so `next.itemType` is undefined and must not clobber `previous`.
+  const itemType = next.itemType ?? previous?.itemType;
   return {
     toolCallId: next.toolCallId,
     ...(kind ? { kind } : {}),
     ...(title ? { title } : {}),
+    ...(itemType ? { itemType } : {}),
     ...(status ? { status } : {}),
     ...(command ? { command } : {}),
     ...(detail ? { detail } : {}),
