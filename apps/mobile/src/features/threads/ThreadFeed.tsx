@@ -164,6 +164,43 @@ export interface ThreadFeedProps {
   readonly usesAutomaticContentInsets?: boolean;
   readonly onHeaderMaterialVisibilityChange?: (visible: boolean) => void;
   readonly skills?: ReadonlyArray<SelectableMarkdownSkill>;
+  /** Branches the conversation into a new thread up to this assistant message. */
+  readonly onBranchFromMessage?: (messageId: MessageId) => void;
+}
+
+// Small icon button next to the copy action on settled assistant messages.
+// Mirrors the web "Branch chat from here" affordance.
+function BranchFromMessageButton(props: {
+  readonly messageId: MessageId;
+  readonly tintColor: ColorValue;
+  readonly onBranchFromMessage: (messageId: MessageId) => void;
+}) {
+  return (
+    <Pressable
+      accessibilityRole="button"
+      accessibilityLabel="Branch chat from here"
+      hitSlop={8}
+      onPress={() => {
+        void Haptics.selectionAsync();
+        props.onBranchFromMessage(props.messageId);
+      }}
+      style={({ pressed }) => ({
+        width: 28,
+        height: 28,
+        alignItems: "center",
+        justifyContent: "center",
+        borderRadius: 9,
+        opacity: pressed ? 0.52 : 1,
+      })}
+    >
+      <SymbolView
+        name="arrow.triangle.branch"
+        size={13}
+        tintColor={props.tintColor}
+        type="monochrome"
+      />
+    </Pressable>
+  );
 }
 
 function MessageAttachmentImage(props: {
@@ -830,6 +867,7 @@ function renderFeedEntry(
     readonly onToggleTurnFold: (turnId: TurnId) => void;
     readonly onPressImage: (uri: string, headers?: Record<string, string>) => void;
     readonly onMarkdownLinkPress: (href: string) => void;
+    readonly onBranchFromMessage: ((messageId: MessageId) => void) | undefined;
     readonly iconSubtleColor: string | import("react-native").ColorValue;
     readonly userBubbleColor: string | import("react-native").ColorValue;
     readonly markdownStyles: MarkdownStyleSets;
@@ -1001,6 +1039,13 @@ function renderFeedEntry(
               buttonSize={28}
               iconSize={13}
             />
+            {props.onBranchFromMessage ? (
+              <BranchFromMessageButton
+                messageId={message.id}
+                tintColor={iconSubtleColor}
+                onBranchFromMessage={props.onBranchFromMessage}
+              />
+            ) : null}
             <Text className="font-t3-medium text-xs tabular-nums text-neutral-600 dark:text-neutral-400">
               {timestampLabel}
             </Text>
@@ -1742,6 +1787,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
         onToggleTurnFold,
         onPressImage,
         onMarkdownLinkPress,
+        onBranchFromMessage: props.onBranchFromMessage,
         iconSubtleColor,
         userBubbleColor,
         markdownStyles,
@@ -1768,6 +1814,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
       onToggleWorkGroup,
       onToggleWorkRow,
       props.environmentId,
+      props.onBranchFromMessage,
       props.skills,
     ],
   );

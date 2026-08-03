@@ -7,9 +7,13 @@ import {
 } from "@react-navigation/native";
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import * as Option from "effect/Option";
-import { EnvironmentId, ThreadId, type ProjectScript } from "@t3tools/contracts";
+import { EnvironmentId, ThreadId, type MessageId, type ProjectScript } from "@t3tools/contracts";
 import { projectScriptCwd, projectScriptRuntimeEnv } from "@t3tools/shared/projectScripts";
-import { Platform, ScrollView, View } from "react-native";
+import {
+  isAtomCommandInterrupted,
+  squashAtomCommandFailure,
+} from "@t3tools/client-runtime/state/runtime";
+import { Alert, Platform, ScrollView, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useWorkspaceState } from "../../state/workspace";
 import { useEnvironmentQuery } from "../../state/query";
@@ -58,7 +62,8 @@ import { useSelectedThreadGitState } from "../../state/use-selected-thread-git-s
 import { useSelectedThreadRequests } from "../../state/use-selected-thread-requests";
 import { useSelectedThreadWorktree } from "../../state/use-selected-thread-worktree";
 import { useThreadComposerState } from "../../state/use-thread-composer-state";
-import { threadEnvironment } from "../../state/threads";
+import { threadEnvironment, waitForThreadShell } from "../../state/threads";
+import { uuidv4 } from "../../lib/uuid";
 import { projectThreadContentPresentation } from "./threadContentPresentation";
 import {
   useAdaptiveWorkspaceLayout,
@@ -196,6 +201,7 @@ function ThreadRouteContent(
   const gitActions = useSelectedThreadGitActions();
   const requests = useSelectedThreadRequests();
   const interruptThreadTurn = useAtomCommand(threadEnvironment.interruptTurn, "thread interrupt");
+  const branchThread = useAtomCommand(threadEnvironment.branch, "thread branch");
   const navigation = useNavigation();
   const params = props.route.params;
   const environmentIdRaw = firstRouteParam(params.environmentId);
@@ -478,6 +484,54 @@ function ThreadRouteContent(
       },
     });
   }, [interruptThreadTurn, selectedThread]);
+
+  // Branch the conversation into a new thread that copies history up to and
+  // including the tapped assistant message. The server clones the source
+  // thread's metadata (project, model, repo branch, worktree), so the new
+  // chat continues in the same repository branch.
+  const branchInFlightRef = useRef(false);
+  const handleBranchFromMessage = useCallback(
+    async (messageId: MessageId) => {
+      if (!selectedThread || branchInFlightRef.current) {
+        return;
+      }
+      branchInFlightRef.current = true;
+      try {
+        const nextThreadId = ThreadId.make(uuidv4());
+        const result = await branchThread({
+          environmentId: selectedThread.environmentId,
+          input: {
+            sourceThreadId: selectedThread.id,
+            sourceMessageId: messageId,
+            threadId: nextThreadId,
+          },
+        });
+        if (result._tag === "Failure") {
+          if (!isAtomCommandInterrupted(result)) {
+            const error = squashAtomCommandFailure(result);
+            Alert.alert(
+              "Branch failed",
+              error instanceof Error ? error.message : "Could not branch this chat.",
+            );
+          }
+          return;
+        }
+        // Wait until the new thread's shell reaches the store, then open it —
+        // navigating earlier would render a "Thread unavailable" flash.
+        await waitForThreadShell({
+          environmentId: selectedThread.environmentId,
+          threadId: nextThreadId,
+        });
+        navigation.navigate("Thread", {
+          environmentId: String(selectedThread.environmentId),
+          threadId: String(nextThreadId),
+        });
+      } finally {
+        branchInFlightRef.current = false;
+      }
+    },
+    [branchThread, navigation, selectedThread],
+  );
 
   const handleOpenTerminal = useCallback(
     (nextTerminalId?: string | null) => {
@@ -789,6 +843,7 @@ function ThreadRouteContent(
           onSelectUserInputOption={requests.onSelectUserInputOption}
           onChangeUserInputCustomAnswer={requests.onChangeUserInputCustomAnswer}
           onSubmitUserInput={requests.onSubmitUserInput}
+          onBranchFromMessage={handleBranchFromMessage}
         />
       </View>
     </>

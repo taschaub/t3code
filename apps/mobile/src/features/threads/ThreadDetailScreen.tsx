@@ -96,6 +96,8 @@ export interface ThreadDetailScreenProps {
     customAnswer: string,
   ) => void;
   readonly onSubmitUserInput: () => Promise<unknown>;
+  /** Branches the conversation into a new thread up to this assistant message. */
+  readonly onBranchFromMessage?: (messageId: MessageId) => void;
   readonly showContent?: boolean;
 }
 
@@ -371,6 +373,7 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
             usesAutomaticContentInsets={props.usesAutomaticContentInsets}
             onHeaderMaterialVisibilityChange={props.onHeaderMaterialVisibilityChange}
             skills={selectedProviderSkills}
+            onBranchFromMessage={props.onBranchFromMessage}
           />
         </View>
       ) : (
