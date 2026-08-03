@@ -104,6 +104,7 @@ export function buildLoadingThreadFromShell(shell: ThreadShell): Thread {
     activities: [],
     checkpoints: [],
     deletedAt: null,
+    redo: null,
   };
 }
 
