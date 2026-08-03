@@ -118,6 +118,9 @@ export class VcsProcessExitError extends Schema.TaggedErrorClass<VcsProcessExitE
     exitCode: Schema.Number,
     detail: Schema.String,
     failureKind: Schema.optional(VcsProcessExitFailureKind),
+    // Sanitized stderr excerpt. Callers must redact secrets and bound the
+    // length before attaching it; this schema does not sanitize.
+    stderrSnippet: Schema.optional(Schema.String),
     stderrLength: Schema.optional(NonNegativeInt),
     stderrTruncated: Schema.optional(Schema.Boolean),
   },
@@ -130,6 +133,7 @@ export class VcsProcessExitError extends Schema.TaggedErrorClass<VcsProcessExitE
     context: VcsProcessErrorContext,
     error: VcsProcessExitFailure,
     failureKind: VcsProcessExitFailureKind,
+    stderrSnippet?: string,
   ) {
     const detail =
       failureKind === "authentication"
@@ -147,6 +151,7 @@ export class VcsProcessExitError extends Schema.TaggedErrorClass<VcsProcessExitE
       exitCode: error.exitCode,
       detail,
       failureKind,
+      ...(stderrSnippet !== undefined && stderrSnippet.length > 0 ? { stderrSnippet } : {}),
       stderrLength: error.stderr.length,
       stderrTruncated: error.stderrTruncated,
     });

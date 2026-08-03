@@ -52,6 +52,27 @@ describe("GitHubCli.layer", () => {
     assert.notProperty(commandFailure, "operation");
   });
 
+  it("surfaces the sanitized stderr snippet in command failure details", () => {
+    const context = { command: "gh", cwd: "/repo" } as const;
+    const exitError = new VcsProcessExitError({
+      operation: "GitHubCli.execute",
+      command: "gh",
+      cwd: "/repo",
+      exitCode: 1,
+      detail: "Process exited with a non-zero status.",
+      failureKind: "command-failed",
+      stderrSnippet: "pull request create failed: GraphQL: Head ref must be a branch",
+    });
+
+    const commandFailure = GitHubCli.fromVcsError(context, exitError);
+
+    assert.equal(commandFailure._tag, "GitHubCliCommandError");
+    assert.equal(
+      commandFailure.detail,
+      "GitHub CLI command failed: pull request create failed: GraphQL: Head ref must be a branch",
+    );
+  });
+
   it.effect("parses pull request view output", () =>
     Effect.gen(function* () {
       mockRun.mockReturnValueOnce(

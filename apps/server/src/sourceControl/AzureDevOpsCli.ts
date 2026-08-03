@@ -73,7 +73,8 @@ export class AzureDevOpsCommandFailedError extends Schema.TaggedErrorClass<Azure
   azureDevOpsCommandErrorFields,
 ) {
   get detail(): string {
-    return "Azure DevOps CLI command failed.";
+    // Surface the sanitized az stderr so users see the real failure reason.
+    return VcsProcess.describeCommandFailure("Azure DevOps CLI command failed", this.cause);
   }
 
   override get message(): string {

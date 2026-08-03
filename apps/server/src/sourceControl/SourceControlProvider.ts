@@ -1,5 +1,6 @@
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
+import * as VcsProcess from "../vcs/VcsProcess.ts";
 import type {
   ChangeRequest,
   ChangeRequestState,
@@ -30,12 +31,7 @@ const MAX_ERROR_TRANSPORT_VALUE_LENGTH = 256;
  * only strips URL secrets and bounds diagnostic values sent over transport.
  */
 export function transportSafeSourceControlErrorValue(value: string): string {
-  let printable = "";
-  for (const character of value) {
-    const codePoint = character.codePointAt(0);
-    printable += codePoint !== undefined && (codePoint < 32 || codePoint === 127) ? " " : character;
-  }
-  const normalized = printable.trim().replace(/\s+/gu, " ");
+  const normalized = VcsProcess.printableTransportText(value);
 
   let safe = normalized;
   try {

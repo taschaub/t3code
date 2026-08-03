@@ -2,6 +2,7 @@ import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Match from "effect/Match";
+import * as Schema from "effect/Schema";
 import { ChildProcessSpawner } from "effect/unstable/process";
 
 import {
@@ -49,6 +50,61 @@ export class VcsProcess extends Context.Service<
 const DEFAULT_TIMEOUT_MS = 30_000;
 const DEFAULT_MAX_OUTPUT_BYTES = 1_000_000;
 const OUTPUT_TRUNCATED_MARKER = "\n\n[truncated]";
+
+const STDERR_SNIPPET_MAX_LENGTH = 400;
+
+/**
+ * Replaces control characters with spaces and collapses whitespace so the
+ * value renders as a single printable line in error messages and logs.
+ */
+export function printableTransportText(value: string): string {
+  let printable = "";
+  for (const character of value) {
+    const codePoint = character.codePointAt(0);
+    printable += codePoint !== undefined && (codePoint < 32 || codePoint === 127) ? " " : character;
+  }
+  return printable.trim().replace(/\s+/gu, " ");
+}
+
+/**
+ * Turns raw CLI stderr into a transport-safe diagnostic snippet.
+ *
+ * Errors like `VcsProcessExitError` travel over the WebSocket to the client,
+ * so we redact credential-looking values (PATs, bearer headers, URL
+ * userinfo), strip control characters, and bound the length. Without this
+ * snippet the client only sees a generic "command failed" and the real CLI
+ * error is lost (see gh `pr create` failures that were undiagnosable).
+ */
+export function stderrSnippetForTransport(stderr: string): string | undefined {
+  const redacted = stderr
+    // Provider token formats (GitHub gho_/ghp_/github_pat_, GitLab glpat-, ...).
+    .replace(/\b(gh[pousr]_|github_pat_|glpat-)[A-Za-z0-9_-]+/g, "$1[redacted]")
+    // Authorization headers and token key/value pairs.
+    .replace(/\b(authorization\s*:\s*)(?:\S+\s+)?\S+/gi, "$1[redacted]")
+    .replace(/\b(token\s*[=:]\s*)\S+/gi, "$1[redacted]")
+    // Credentials embedded in URLs (https://user:pass@host).
+    .replace(/(https?:\/\/)[^\s/@]+@/gi, "$1[redacted]@");
+
+  const normalized = printableTransportText(redacted);
+  if (normalized.length === 0) {
+    return undefined;
+  }
+  return normalized.slice(0, STDERR_SNIPPET_MAX_LENGTH);
+}
+
+const isVcsProcessExitError = Schema.is(VcsProcessExitError);
+
+/**
+ * Builds a human-readable failure detail for provider CLI errors.
+ *
+ * Appends the sanitized stderr snippet from the underlying process exit so
+ * the client sees the actual CLI error (e.g. gh's GraphQL message) instead
+ * of only a generic "command failed".
+ */
+export function describeCommandFailure(base: string, cause: unknown): string {
+  const snippet = isVcsProcessExitError(cause) ? cause.stderrSnippet : undefined;
+  return snippet === undefined ? `${base}.` : `${base}: ${snippet}`;
+}
 
 const classifyNonZeroExit = (command: string, stderr: string): VcsProcessExitFailureKind => {
   const normalized = stderr.toLowerCase();
@@ -146,6 +202,7 @@ export const make = Effect.gen(function* () {
     }
 
     if (!input.allowNonZeroExit && result.code !== 0) {
+      const failureKind = classifyNonZeroExit(input.command, result.stderr);
       return yield* VcsProcessExitError.fromProcessExit(
         baseError,
         {
@@ -153,7 +210,10 @@ export const make = Effect.gen(function* () {
           stderr: result.stderr,
           stderrTruncated: result.stderrTruncated,
         },
-        classifyNonZeroExit(input.command, result.stderr),
+        failureKind,
+        // Authentication stderr is the most likely to reference credentials,
+        // and those errors already map to static, actionable details.
+        failureKind === "authentication" ? undefined : stderrSnippetForTransport(result.stderr),
       );
     }
 

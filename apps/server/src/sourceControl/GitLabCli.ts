@@ -105,7 +105,8 @@ export class GitLabCliCommandError extends Schema.TaggedErrorClass<GitLabCliComm
   gitLabCliExecutionErrorContext,
 ) {
   get detail(): string {
-    return "GitLab CLI command failed.";
+    // Surface the sanitized glab stderr so users see the real failure reason.
+    return VcsProcess.describeCommandFailure("GitLab CLI command failed", this.cause);
   }
 
   override get message(): string {

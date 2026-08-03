@@ -69,7 +69,8 @@ export class GitHubCliCommandError extends Schema.TaggedErrorClass<GitHubCliComm
   gitHubCliFailureFields,
 ) {
   get detail(): string {
-    return "GitHub CLI command failed.";
+    // Surface the sanitized gh stderr so users see the real failure reason.
+    return VcsProcess.describeCommandFailure("GitHub CLI command failed", this.cause);
   }
 
   override get message(): string {

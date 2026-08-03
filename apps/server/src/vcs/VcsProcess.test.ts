@@ -110,6 +110,9 @@ describe("VcsProcess.run", () => {
         stderrLength: secretStderr.length,
         stderrTruncated: false,
       });
+      // The sanitized snippet is retained for diagnostics, but the message
+      // itself must stay free of raw process arguments and stderr.
+      expect(error._tag === "VcsProcessExitError" ? error.stderrSnippet : null).toBe(secretStderr);
       expect(error.message).not.toContain(secretArgument);
       expect(error.message).not.toContain(secretStderr);
     }).pipe(provideLive),
@@ -135,6 +138,10 @@ describe("VcsProcess.run", () => {
         stderrLength: secretStderr.length,
         stderrTruncated: false,
       });
+      // Authentication stderr is never retained, not even as a snippet.
+      expect(
+        error._tag === "VcsProcessExitError" ? error.stderrSnippet : "unexpected-tag",
+      ).toBeUndefined();
       expect(error.message).not.toContain(secretStderr);
       expect(error.message).not.toContain("super-secret-token");
     }).pipe(provideLive),
@@ -269,4 +276,73 @@ describe("VcsProcess.run", () => {
       expect(error).toBeInstanceOf(VcsProcessTimeoutError);
     }).pipe(provideLive),
   );
+});
+
+describe("stderrSnippetForTransport", () => {
+  it("returns undefined for empty stderr", () => {
+    expect(VcsProcess.stderrSnippetForTransport("")).toBeUndefined();
+    expect(VcsProcess.stderrSnippetForTransport("  \n\t ")).toBeUndefined();
+  });
+
+  it("collapses control characters and whitespace into single spaces", () => {
+    expect(VcsProcess.stderrSnippetForTransport("line one\r\nline\ttwo\u0007")).toBe(
+      "line one line two",
+    );
+  });
+
+  it("redacts provider tokens, auth headers, and URL credentials", () => {
+    expect(VcsProcess.stderrSnippetForTransport("rejected gho_abc123DEF and glpat-xyz789")).toBe(
+      "rejected gho_[redacted] and glpat-[redacted]",
+    );
+    expect(VcsProcess.stderrSnippetForTransport("Authorization: Bearer abc.def.ghi")).toBe(
+      "Authorization: [redacted]",
+    );
+    expect(VcsProcess.stderrSnippetForTransport("failed with token=abc123")).toBe(
+      "failed with token=[redacted]",
+    );
+    expect(
+      VcsProcess.stderrSnippetForTransport("fetch https://user:pass@github.com/o/r.git failed"),
+    ).toBe("fetch https://[redacted]@github.com/o/r.git failed");
+  });
+
+  it("bounds the snippet length", () => {
+    const snippet = VcsProcess.stderrSnippetForTransport("x".repeat(2048));
+    expect(snippet).toHaveLength(400);
+  });
+});
+
+describe("describeCommandFailure", () => {
+  it("appends the snippet from a VcsProcessExitError cause", () => {
+    const cause = new VcsProcessExitError({
+      operation: "GitHubCli.execute",
+      command: "gh",
+      cwd: "/repo",
+      exitCode: 1,
+      detail: "Process exited with a non-zero status.",
+      failureKind: "command-failed",
+      stderrSnippet: "pull request create failed: GraphQL: No commits between main and feature",
+    });
+
+    expect(VcsProcess.describeCommandFailure("GitHub CLI command failed", cause)).toBe(
+      "GitHub CLI command failed: pull request create failed: GraphQL: No commits between main and feature",
+    );
+  });
+
+  it("falls back to the base detail without a snippet", () => {
+    const cause = new VcsProcessExitError({
+      operation: "GitHubCli.execute",
+      command: "gh",
+      cwd: "/repo",
+      exitCode: 1,
+      detail: "Process exited with a non-zero status.",
+      failureKind: "command-failed",
+    });
+
+    expect(VcsProcess.describeCommandFailure("GitHub CLI command failed", cause)).toBe(
+      "GitHub CLI command failed.",
+    );
+    expect(VcsProcess.describeCommandFailure("GitHub CLI command failed", new Error("x"))).toBe(
+      "GitHub CLI command failed.",
+    );
+  });
 });
