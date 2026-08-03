@@ -50,6 +50,9 @@ import Migration0034 from "./Migrations/034_ProjectionThreadsSnoozed.ts";
 import Migration0035 from "./Migrations/035_ProjectionThreadTitleRegeneration.ts";
 // Local redo migration renumbered from 33 to 36 as upstream claimed 33-35.
 import Migration0036 from "./Migrations/036_ProjectionThreadRedoState.ts";
+// Repairs databases that recorded the redo migration under id 33 or 35 and
+// therefore skipped upstream's migrations with those ids.
+import Migration0037 from "./Migrations/037_RepairRenumberedRedoMigrationSlots.ts";
 
 /**
  * Migration loader with all migrations defined inline.
@@ -98,6 +101,7 @@ export const migrationEntries = [
   [34, "ProjectionThreadsSnoozed", Migration0034],
   [35, "ProjectionThreadTitleRegeneration", Migration0035],
   [36, "ProjectionThreadRedoState", Migration0036],
+  [37, "RepairRenumberedRedoMigrationSlots", Migration0037],
 ] as const;
 
 export const migrationManifest = migrationEntries.map(([id, name]) => [id, name] as const);

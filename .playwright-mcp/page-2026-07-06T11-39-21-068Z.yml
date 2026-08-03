@@ -1,0 +1,235 @@
+- generic [ref=f4e1]:
+    - generic [ref=f4e3]:
+        - generic [ref=f4e6]:
+            - link [ref=f4e260] [cursor=pointer]:
+                - /url: /
+                - img [ref=f4e261]
+                - generic [ref=f4e11]: Code
+                - generic [ref=f4e12]: Dev
+            - generic [ref=f4e14]:
+                - list [ref=f4e16]:
+                    - listitem [ref=f4e17]:
+                        - button [ref=f4e262] [cursor=pointer]:
+                            - img [ref=f4e19]
+                            - generic [ref=f4e22]: Search
+                            - generic: ⌘K
+                - generic [ref=f4e23]:
+                    - generic [ref=f4e24]:
+                        - generic [ref=f4e25]: Projects
+                        - generic [ref=f4e26]:
+                            - button [ref=f4e27] [cursor=pointer]:
+                                - img [ref=f4e28]
+                            - button [ref=f4e263] [cursor=pointer]:
+                                - img [ref=f4e32]
+                    - list [ref=f4e47]:
+                        - listitem [ref=f4e48]:
+                            - generic [ref=f4e49]:
+                                - button [ref=f4e264] [cursor=pointer]:
+                                    - img [ref=f4e51]
+                                    - generic [ref=f4e54]: t3-demo-repo
+                                - generic:
+                                    - button:
+                                        - img
+                            - list [ref=f4e55]:
+                                - listitem [ref=f4e56]:
+                                    - button [ref=f4e265] [cursor=pointer]:
+                                        - generic [ref=f4e59]: Add Hello World script
+                                        - generic [ref=f4e61]:
+                                            - generic:
+                                                - button:
+                                                    - img
+                                            - generic:
+                                                - generic:
+                                                    - generic: 4m ago
+            - separator [ref=f4e35]
+            - list [ref=f4e37]:
+                - listitem [ref=f4e38]:
+                    - button [ref=f4e266] [cursor=pointer]:
+                        - img [ref=f4e40]
+                        - generic [ref=f4e43]: Settings
+            - button [ref=f4e267]
+        - main [ref=f4e62]:
+            - generic [ref=f4e64]:
+                - generic [ref=f4e65]:
+                    - generic [ref=f4e67]:
+                        - button [ref=f4e268] [cursor=pointer]:
+                            - img
+                        - button [ref=f4e269] [cursor=pointer]:
+                            - img
+                    - generic [ref=f4e70]:
+                        - heading [level=2] [ref=f4e270]: Add Hello World script
+                        - generic [ref=f4e73]:
+                            - button [ref=f4e271] [cursor=pointer]:
+                                - img
+                                - generic [ref=f4e75]: Add action
+                            - group [ref=f4e272]:
+                                - button [ref=f4e273] [cursor=pointer]:
+                                    - img
+                                    - generic [ref=f4e78]: Open
+                                - separator
+                                - button [ref=f4e274] [cursor=pointer]:
+                                    - img
+                            - group [ref=f4e275]:
+                                - button [ref=f4e276] [cursor=pointer]:
+                                    - img
+                                    - generic [ref=f4e82]: Commit
+                                - separator
+                                - button [ref=f4e277] [cursor=pointer]:
+                                    - img
+                - generic [ref=f4e85]:
+                    - generic [ref=f4e87]:
+                        - generic [ref=f4e92]:
+                            - generic [ref=f4e96]:
+                                - paragraph [ref=f4e101]: Create a file hello.py that prints "Hello, world!"
+                                - generic [ref=f4e103]:
+                                    - paragraph [ref=f4e104]: 13:33
+                                    - generic [ref=f4e105]:
+                                        - button [ref=f4e278] [cursor=pointer]:
+                                            - img
+                                        - button [ref=f4e279] [cursor=pointer]:
+                                            - img
+                                        - button [ref=f4e280] [cursor=pointer]:
+                                            - img
+                            - button [ref=f4e281] [cursor=pointer]:
+                                - generic [ref=f4e114]: Worked for 6.7s
+                                - img [ref=f4e115]
+                            - generic [ref=f4e120]:
+                                - paragraph [ref=f4e122]:
+                                    - text: Created
+                                    - link [ref=f4e282] [cursor=pointer]:
+                                        - /url: /tmp/t3-demo-repo/hello.py
+                                        - img [ref=f4e124]
+                                        - generic [ref=f4e126]: hello.py
+                                    - text: with the requested
+                                    - code [ref=f4e127]: print("Hello, world!")
+                                    - text: statement.
+                                - generic [ref=f4e128]:
+                                    - generic [ref=f4e129]:
+                                        - paragraph [ref=f4e130]:
+                                            - generic [ref=f4e131]: Changed files (1)
+                                            - text: •
+                                            - generic [ref=f4e132]:
+                                                - generic [ref=f4e133]: "+1"
+                                                - generic [ref=f4e134]: "-0"
+                                        - generic [ref=f4e135]:
+                                            - button [ref=f4e283] [cursor=pointer]: Collapse all
+                                            - button [ref=f4e284] [cursor=pointer]: View diff
+                                    - button [ref=f4e285]:
+                                        - img [ref=f4e140]
+                                        - generic [ref=f4e142]: hello.py
+                                        - generic [ref=f4e144]:
+                                            - generic [ref=f4e145]: "+1"
+                                            - generic [ref=f4e146]: "-0"
+                                - generic [ref=f4e147]:
+                                    - button [ref=f4e286] [cursor=pointer]:
+                                        - img
+                                    - button [ref=f4e287] [cursor=pointer]:
+                                        - img
+                                    - paragraph [ref=f4e150]: 13:33
+                            - generic [ref=f4e154]:
+                                - paragraph [ref=f4e159]: Now add a goodbye.py that prints "Goodbye!"
+                                - generic [ref=f4e161]:
+                                    - paragraph [ref=f4e162]: 13:34
+                                    - generic [ref=f4e163]:
+                                        - button [ref=f4e288] [cursor=pointer]:
+                                            - img
+                                        - button [ref=f4e289] [cursor=pointer]:
+                                            - img
+                                        - button [ref=f4e290] [cursor=pointer]:
+                                            - img
+                            - button [ref=f4e291] [cursor=pointer]:
+                                - generic [ref=f4e172]: Worked for 6.1s
+                                - img [ref=f4e173]
+                            - generic [ref=f4e178]:
+                                - paragraph [ref=f4e180]:
+                                    - text: Added
+                                    - link [ref=f4e292] [cursor=pointer]:
+                                        - /url: /tmp/t3-demo-repo/goodbye.py
+                                        - img [ref=f4e182]
+                                        - generic [ref=f4e184]: goodbye.py
+                                    - text: with
+                                    - code [ref=f4e185]: print("Goodbye!")
+                                    - text: .
+                                - generic [ref=f4e186]:
+                                    - generic [ref=f4e187]:
+                                        - paragraph [ref=f4e188]:
+                                            - generic [ref=f4e189]: Changed files (1)
+                                            - text: •
+                                            - generic [ref=f4e190]:
+                                                - generic [ref=f4e191]: "+1"
+                                                - generic [ref=f4e192]: "-0"
+                                        - generic [ref=f4e193]:
+                                            - button [ref=f4e293] [cursor=pointer]: Collapse all
+                                            - button [ref=f4e294] [cursor=pointer]: View diff
+                                    - button [ref=f4e295]:
+                                        - img [ref=f4e198]
+                                        - generic [ref=f4e200]: goodbye.py
+                                        - generic [ref=f4e202]:
+                                            - generic [ref=f4e203]: "+1"
+                                            - generic [ref=f4e204]: "-0"
+                                - generic [ref=f4e205]:
+                                    - button [ref=f4e296] [cursor=pointer]:
+                                        - img
+                                    - button [ref=f4e297] [cursor=pointer]:
+                                        - img
+                                    - paragraph [ref=f4e208]: 13:34
+                        - button [ref=f4e298] [cursor=pointer]
+                    - generic:
+                        - generic [ref=f4e220]:
+                            - generic [ref=f4e223]:
+                                - textbox [ref=f4e224]:
+                                    - paragraph [ref=f4e225]
+                                - generic: Ask anything, @tag files/folders, $use skills, or / for commands
+                            - generic [ref=f4e226]:
+                                - generic [ref=f4e227]:
+                                    - button [ref=f4e299] [cursor=pointer]:
+                                        - generic [ref=f4e229]:
+                                            - generic [ref=f4e230]:
+                                                - img
+                                            - generic [ref=f4e231]: GPT-5.4
+                                        - generic [ref=f4e232]:
+                                            - img
+                                    - separator [ref=f4e233]
+                                    - button [ref=f4e300] [cursor=pointer]:
+                                        - generic [ref=f4e235]:
+                                            - text: Medium · Fast
+                                            - img
+                                    - separator [ref=f4e236]
+                                    - combobox [ref=f4e301] [cursor=pointer]:
+                                        - img
+                                        - generic [ref=f4e238]: Full access
+                                        - generic [ref=f4e239]:
+                                            - img
+                                    - textbox [ref=f4e240]: full-access
+                                    - separator [ref=f4e241]
+                                    - button [ref=f4e302] [cursor=pointer]:
+                                        - img
+                                        - generic [ref=f4e243]: Build
+                                - generic [ref=f4e244]:
+                                    - button [ref=f4e303] [cursor=pointer]:
+                                        - img [ref=f4e247]
+                                    - button [disabled]:
+                                        - img
+                        - generic [ref=f4e251]:
+                            - generic [ref=f4e253]:
+                                - img [ref=f4e254]
+                                - text: Local checkout
+                            - combobox [ref=f4e257] [cursor=pointer]:
+                                - img
+                                - generic [ref=f4e258]: master
+                                - img
+                            - textbox [ref=f4e259]: master
+        - button [pressed] [ref=f4e304] [cursor=pointer]:
+            - img
+            - generic [ref=f4e46]: Toggle Sidebar
+    - generic:
+        - region "Notifications"
+    - generic:
+        - region "Notifications"
+    - alertdialog "Revert to checkpoint 1?" [ref=f4e308]:
+        - generic [ref=f4e309]:
+            - heading "Revert to checkpoint 1?" [level=2] [ref=f4e310]
+            - paragraph [ref=f4e311]: This removes newer messages and turn diffs from this thread and restores workspace files to the checkpoint. Staged changes are kept. You can redo the revert until you send a new message.
+        - generic [ref=f4e312]:
+            - button "Cancel" [active] [ref=f4e313] [cursor=pointer]
+            - button "Revert" [ref=f4e314] [cursor=pointer]

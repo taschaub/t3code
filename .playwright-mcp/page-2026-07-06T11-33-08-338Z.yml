@@ -1,0 +1,139 @@
+- generic [ref=f3e1]:
+    - generic [ref=f3e3]:
+        - generic [ref=f3e6]:
+            - link "Go to threads" [ref=f3e8] [cursor=pointer]:
+                - /url: /
+                - img "T3" [ref=f3e9]
+                - generic [ref=f3e11]: Code
+                - generic [ref=f3e12]: Dev
+            - generic [ref=f3e14]:
+                - list [ref=f3e16]:
+                    - listitem [ref=f3e17]:
+                        - button "Search ⌘K" [ref=f3e18] [cursor=pointer]:
+                            - img [ref=f3e19]
+                            - generic [ref=f3e22]: Search
+                            - generic: ⌘K
+                - generic [ref=f3e23]:
+                    - generic [ref=f3e24]:
+                        - generic [ref=f3e25]: Projects
+                        - generic [ref=f3e26]:
+                            - button [ref=f3e27] [cursor=pointer]:
+                                - img [ref=f3e28]
+                            - button "Add project" [ref=f3e31] [cursor=pointer]:
+                                - img [ref=f3e32]
+                    - list [ref=f3e86]:
+                        - listitem [ref=f3e87]:
+                            - generic [ref=f3e88]:
+                                - button "Connecting t3-demo-repo" [ref=f3e124] [cursor=pointer]:
+                                    - generic "Connecting" [ref=f3e125]:
+                                        - img [ref=f3e128]
+                                    - generic [ref=f3e93]: t3-demo-repo
+                                - generic:
+                                    - button "Create new thread in t3-demo-repo":
+                                        - img
+                            - list [ref=f3e130]:
+                                - listitem [ref=f3e131]:
+                                    - button "Connecting Create a file hello.py that prints \"Hello, world!\" Archive Create a file hello.py that prints \"Hello, world!\" just now" [ref=f3e132] [cursor=pointer]:
+                                        - generic [ref=f3e133]:
+                                            - generic "Connecting" [ref=f3e134]:
+                                                - generic [ref=f3e136]: Connecting
+                                            - generic [ref=f3e137]: Create a file hello.py that prints "Hello, world!"
+                                        - generic [ref=f3e139]:
+                                            - generic:
+                                                - button "Archive Create a file hello.py that prints \"Hello, world!\"":
+                                                    - img
+                                            - generic:
+                                                - generic:
+                                                    - generic: just now
+            - separator [ref=f3e35]
+            - list [ref=f3e37]:
+                - listitem [ref=f3e38]:
+                    - button "Settings" [ref=f3e39] [cursor=pointer]:
+                        - img [ref=f3e40]
+                        - generic [ref=f3e43]: Settings
+            - button "Resize Sidebar" [ref=f3e44]
+        - main [ref=f3e140]:
+            - generic [ref=f3e142]:
+                - generic [ref=f3e143]:
+                    - generic [ref=f3e145]:
+                        - button "Toggle terminal drawer" [ref=f3e146] [cursor=pointer]:
+                            - img
+                        - button "Toggle right panel" [ref=f3e147] [cursor=pointer]:
+                            - img
+                    - generic [ref=f3e148]:
+                        - heading "Create a file hello.py that prints \"Hello, world!\"" [level=2] [ref=f3e150]
+                        - generic [ref=f3e151]:
+                            - button "Add action" [ref=f3e152] [cursor=pointer]:
+                                - img
+                                - generic [ref=f3e153]: Add action
+                            - group "Open in editor" [ref=f3e154]:
+                                - button "Open" [ref=f3e155] [cursor=pointer]:
+                                    - img
+                                    - generic [ref=f3e156]: Open
+                                - separator
+                                - button "Copy options" [ref=f3e157] [cursor=pointer]:
+                                    - img
+                            - group "Git actions" [ref=f3e158]:
+                                - button "Publish repository" [ref=f3e159] [cursor=pointer]:
+                                    - img
+                                    - generic [ref=f3e160]: Publish repository
+                                - separator
+                                - button "Git action options" [ref=f3e161] [cursor=pointer]:
+                                    - img
+                - generic [ref=f3e163]:
+                    - generic [ref=f3e174]:
+                        - paragraph [ref=f3e179]: Create a file hello.py that prints "Hello, world!"
+                        - generic [ref=f3e181]:
+                            - paragraph [ref=f3e182]: 13:33
+                            - button "Copy link" [ref=f3e184] [cursor=pointer]:
+                                - img
+                    - generic:
+                        - generic [ref=f3e192]:
+                            - generic [ref=f3e195]:
+                                - textbox [active] [ref=f3e196]:
+                                    - paragraph [ref=f3e197]
+                                - generic: Ask anything, @tag files/folders, $use skills, or / for commands
+                            - generic [ref=f3e198]:
+                                - generic [ref=f3e199]:
+                                    - button "GPT-5.4" [ref=f3e200] [cursor=pointer]:
+                                        - generic [ref=f3e201]:
+                                            - generic [ref=f3e202]:
+                                                - img
+                                            - generic [ref=f3e203]: GPT-5.4
+                                        - generic [ref=f3e204]:
+                                            - img
+                                    - separator [ref=f3e205]
+                                    - button "Medium · Fast" [ref=f3e206] [cursor=pointer]:
+                                        - generic [ref=f3e207]:
+                                            - text: Medium · Fast
+                                            - img
+                                    - separator [ref=f3e208]
+                                    - combobox "Runtime mode" [ref=f3e209] [cursor=pointer]:
+                                        - img
+                                        - generic [ref=f3e210]: Full access
+                                        - generic [ref=f3e211]:
+                                            - img
+                                    - textbox [ref=f3e212]: full-access
+                                    - separator [ref=f3e213]
+                                    - button "Default mode — click to enter plan mode" [ref=f3e214] [cursor=pointer]:
+                                        - img
+                                        - generic [ref=f3e215]: Build
+                                - generic [ref=f3e216]:
+                                    - button "Send message" [disabled]:
+                                        - img
+                        - generic [ref=f3e218]:
+                            - generic [ref=f3e220]:
+                                - img [ref=f3e221]
+                                - text: Local checkout
+                            - combobox [ref=f3e224] [cursor=pointer]:
+                                - img
+                                - generic [ref=f3e225]: master
+                                - img
+                            - textbox [ref=f3e226]: master
+        - button "Toggle main sidebar" [pressed] [ref=f3e84] [cursor=pointer]:
+            - img
+            - generic [ref=f3e85]: Toggle Sidebar
+    - generic:
+        - region "Notifications"
+    - generic:
+        - region "Notifications"

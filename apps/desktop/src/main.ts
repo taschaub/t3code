@@ -35,6 +35,7 @@ import * as DesktopApp from "./app/DesktopApp.ts";
 import * as DesktopAppIdentity from "./app/DesktopAppIdentity.ts";
 import * as DesktopConnectionCatalogStore from "./app/DesktopConnectionCatalogStore.ts";
 import * as DesktopClerk from "./app/DesktopClerk.ts";
+import * as DesktopClerkBootstrap from "./app/DesktopClerkBootstrap.ts";
 import * as DesktopApplicationMenu from "./window/DesktopApplicationMenu.ts";
 import * as DesktopAssets from "./app/DesktopAssets.ts";
 import * as DesktopBackendConfiguration from "./backend/DesktopBackendConfiguration.ts";
@@ -61,6 +62,18 @@ import * as PreviewManager from "./preview/Manager.ts";
 import * as DesktopWindow from "./window/DesktopWindow.ts";
 import * as DesktopWslBackend from "./wsl/DesktopWslBackend.ts";
 import * as DesktopWslEnvironment from "./wsl/DesktopWslEnvironment.ts";
+
+// Must run synchronously during module evaluation: the bridge registers
+// privileged schemes, which Electron rejects once the ready event has been
+// delivered, and ready can fire on the first event-loop turn after this
+// module finishes loading. See DesktopClerkBootstrap for the full story.
+const clerkBootstrap = DesktopClerkBootstrap.bootstrapDesktopClerk({
+  app: Electron.app,
+  env: process.env,
+  // oxlint-disable-next-line t3code/no-global-process-runtime -- Runs at module scope before the Effect runtime exists; HostProcessPlatform is not constructible yet.
+  platform: process.platform,
+  homeDirectory: NodeOS.homedir(),
+});
 
 const desktopEnvironmentLayer = Layer.unwrap(
   Effect.gen(function* () {
@@ -191,7 +204,7 @@ const desktopApplicationLayer = Layer.mergeAll(
   Layer.provideMerge(desktopLocalEnvironmentAuthLayer),
 );
 
-const desktopClerkLayer = DesktopClerk.layer.pipe(
+const desktopClerkLayer = DesktopClerk.layer(clerkBootstrap).pipe(
   Layer.provideMerge(desktopEnvironmentLayer),
   Layer.provideMerge(NodeServices.layer),
   Layer.provideMerge(ElectronApp.layer),

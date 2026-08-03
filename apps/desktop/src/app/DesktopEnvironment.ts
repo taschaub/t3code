@@ -134,6 +134,59 @@ const readPackagedLocalBuildMarker = Effect.fn("desktop.environment.readLocalBui
   },
 );
 
+export interface DesktopIdentityPathsInput {
+  readonly platform: NodeJS.Platform;
+  readonly homeDirectory: string;
+  readonly appDataDirectoryOverride: Option.Option<string>;
+  readonly xdgConfigHome: Option.Option<string>;
+  readonly t3Home: Option.Option<string>;
+  readonly isDevelopment: boolean;
+  readonly isLocalBuild: boolean;
+  readonly join: (...segments: ReadonlyArray<string>) => string;
+}
+
+export interface DesktopIdentityPaths {
+  readonly appDataDirectory: string;
+  readonly baseDir: string;
+  readonly stateDir: string;
+  readonly userDataDirName: string;
+  readonly legacyUserDataDirName: string;
+}
+
+// Single source of truth for the identity-critical directories. The Clerk
+// bootstrap in main.ts resolves these synchronously before Electron's ready
+// event while DesktopEnvironment resolves them through the config layer; both
+// must agree or the single-instance lock and auth storage would split between
+// two directory trees.
+export function resolveDesktopIdentityPaths(
+  input: DesktopIdentityPathsInput,
+): DesktopIdentityPaths {
+  const { homeDirectory, isDevelopment, isLocalBuild, join } = input;
+  const appDataDirectory =
+    input.platform === "win32"
+      ? Option.getOrElse(input.appDataDirectoryOverride, () =>
+          join(homeDirectory, "AppData", "Roaming"),
+        )
+      : input.platform === "darwin"
+        ? join(homeDirectory, "Library", "Application Support")
+        : Option.getOrElse(input.xdgConfigHome, () => join(homeDirectory, ".config"));
+  const baseDir = Option.getOrElse(input.t3Home, () =>
+    join(homeDirectory, isLocalBuild ? ".t3-local" : ".t3"),
+  );
+  const stateDir = join(baseDir, isDevelopment && Option.isNone(input.t3Home) ? "dev" : "userdata");
+  return {
+    appDataDirectory,
+    baseDir,
+    stateDir,
+    userDataDirName: isDevelopment ? "t3code-dev" : isLocalBuild ? "t3code-local" : "t3code",
+    legacyUserDataDirName: isDevelopment
+      ? "T3 Code (Dev)"
+      : isLocalBuild
+        ? "T3 Code (Local)"
+        : "T3 Code (Alpha)",
+  };
+}
+
 function normalizeDesktopArch(arch: string): DesktopRuntimeArch {
   if (arch === "arm64") return "arm64";
   if (arch === "x64") return "x64";
@@ -176,15 +229,6 @@ const make = Effect.fn("desktop.environment.make")(function* (
   const homeDirectory = input.homeDirectory;
   const devServerUrl = config.devServerUrl;
   const isDevelopment = Option.isSome(devServerUrl);
-  const appDataDirectory =
-    input.platform === "win32"
-      ? Option.getOrElse(config.appDataDirectory, () =>
-          path.join(homeDirectory, "AppData", "Roaming"),
-        )
-      : input.platform === "darwin"
-        ? path.join(homeDirectory, "Library", "Application Support")
-        : Option.getOrElse(config.xdgConfigHome, () => path.join(homeDirectory, ".config"));
-  const configuredBaseDir = config.t3Home;
   const rootDir = path.resolve(input.dirname, "../../..");
   const appRoot = input.isPackaged ? input.appPath : rootDir;
   // Non-dev runs that are not the released app (repo `start:desktop`, smoke tests,
@@ -197,25 +241,23 @@ const make = Effect.fn("desktop.environment.make")(function* (
     !isDevelopment &&
     (!input.isPackaged ||
       (yield* readPackagedLocalBuildMarker(path.join(appRoot, "package.json"))));
-  const baseDir = Option.getOrElse(configuredBaseDir, () =>
-    path.join(homeDirectory, isLocalBuild ? ".t3-local" : ".t3"),
-  );
+  const { appDataDirectory, baseDir, stateDir, userDataDirName, legacyUserDataDirName } =
+    resolveDesktopIdentityPaths({
+      platform: input.platform,
+      homeDirectory,
+      appDataDirectoryOverride: config.appDataDirectory,
+      xdgConfigHome: config.xdgConfigHome,
+      t3Home: config.t3Home,
+      isDevelopment,
+      isLocalBuild,
+      join: path.join,
+    });
   const branding = resolveDesktopAppBranding({
     isDevelopment,
     isLocalBuild,
     appVersion: input.appVersion,
   });
   const displayName = branding.displayName;
-  const stateDir = path.join(
-    baseDir,
-    isDevelopment && Option.isNone(configuredBaseDir) ? "dev" : "userdata",
-  );
-  const userDataDirName = isDevelopment ? "t3code-dev" : isLocalBuild ? "t3code-local" : "t3code";
-  const legacyUserDataDirName = isDevelopment
-    ? "T3 Code (Dev)"
-    : isLocalBuild
-      ? "T3 Code (Local)"
-      : "T3 Code (Alpha)";
   const linuxApplicationsDir = path.join(
     Option.getOrElse(config.xdgDataHome, () => path.join(homeDirectory, ".local", "share")),
     "applications",

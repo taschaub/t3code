@@ -1,0 +1,126 @@
+- generic [ref=e1]:
+    - generic [ref=e3]:
+        - generic [ref=e6]:
+            - link "Go to threads" [ref=e253] [cursor=pointer]:
+                - /url: /
+                - img "T3" [ref=e254]
+                - generic [ref=e11]: Code
+                - generic [ref=e12]: Dev
+            - generic [ref=e14]:
+                - list [ref=e16]:
+                    - listitem [ref=e17]:
+                        - button "Search ⌘K" [ref=e255] [cursor=pointer]:
+                            - img [ref=e19]
+                            - generic [ref=e22]: Search
+                            - generic: ⌘K
+                - generic [ref=e23]:
+                    - generic [ref=e24]:
+                        - generic [ref=e25]: Projects
+                        - generic [ref=e26]:
+                            - button [ref=e27] [cursor=pointer]:
+                                - img [ref=e28]
+                            - button "Add project" [ref=e256] [cursor=pointer]:
+                                - img [ref=e32]
+                    - list [ref=e257]:
+                        - listitem [ref=e258]:
+                            - generic [ref=e259]:
+                                - button "t3-demo-repo" [ref=e260] [cursor=pointer]:
+                                    - img [ref=e261]
+                                    - generic [ref=e264]: t3-demo-repo
+                                - generic:
+                                    - button "Create new thread in t3-demo-repo":
+                                        - img
+                            - list [ref=e265]:
+                                - listitem [ref=e266]:
+                                    - generic [ref=e268]: No threads yet
+            - separator [ref=e35]
+            - list [ref=e37]:
+                - listitem [ref=e38]:
+                    - button "Settings" [ref=e269] [cursor=pointer]:
+                        - img [ref=e40]
+                        - generic [ref=e43]: Settings
+            - button "Resize Sidebar" [ref=e270]
+        - main [ref=e271]:
+            - generic [ref=e273]:
+                - generic [ref=e274]:
+                    - generic [ref=e276]:
+                        - button "Toggle terminal drawer" [ref=e277] [cursor=pointer]:
+                            - img
+                        - button "Toggle right panel" [ref=e278] [cursor=pointer]:
+                            - img
+                    - generic [ref=e279]:
+                        - heading "New thread" [level=2] [ref=e281]
+                        - generic [ref=e282]:
+                            - button "Add action" [ref=e283] [cursor=pointer]:
+                                - img
+                                - generic [ref=e284]: Add action
+                            - group "Open in editor" [ref=e285]:
+                                - button "Open" [ref=e286] [cursor=pointer]:
+                                    - img
+                                    - generic [ref=e287]: Open
+                                - separator
+                                - button "Copy options" [ref=e288] [cursor=pointer]:
+                                    - img
+                            - group "Git actions" [ref=e289]:
+                                - button "Publish repository" [ref=e290] [cursor=pointer]:
+                                    - img
+                                    - generic [ref=e291]: Publish repository
+                                - separator
+                                - button "Git action options" [ref=e292] [cursor=pointer]:
+                                    - img
+                - alert [ref=e294]:
+                    - img [ref=e295]
+                    - generic [ref=e297]:
+                        - generic [ref=e298]: Codex provider status
+                        - generic [ref=e299]: "Codex CLI (`codex`) is not installed or not on PATH."
+                - generic [ref=e301]:
+                    - paragraph [ref=e304]: Send a message to start the conversation.
+                    - generic:
+                        - generic [ref=e309]:
+                            - generic [ref=e312]:
+                                - textbox [active] [ref=e313]:
+                                    - paragraph [ref=e314]
+                                - generic: Ask for follow-up changes or attach images
+                            - generic [ref=e315]:
+                                - generic [ref=e316]:
+                                    - button "gpt-5.4" [ref=e317] [cursor=pointer]:
+                                        - generic [ref=e318]:
+                                            - generic [ref=e319]:
+                                                - img
+                                            - generic [ref=e320]: gpt-5.4
+                                        - generic [ref=e321]:
+                                            - img
+                                    - separator [ref=e322]
+                                    - combobox "Runtime mode" [ref=e323] [cursor=pointer]:
+                                        - img
+                                        - generic [ref=e324]: Full access
+                                        - generic [ref=e325]:
+                                            - img
+                                    - textbox [ref=e326]: full-access
+                                    - separator [ref=e327]
+                                    - button "Default mode — click to enter plan mode" [ref=e328] [cursor=pointer]:
+                                        - img
+                                        - generic [ref=e329]: Build
+                                - generic [ref=e330]:
+                                    - button "Send message" [disabled]:
+                                        - img
+                        - generic [ref=e332]:
+                            - generic [ref=e333]:
+                                - combobox "Workspace" [ref=e334] [cursor=pointer]:
+                                    - img
+                                    - generic [ref=e335]: Current checkout
+                                    - generic [ref=e336]:
+                                        - img
+                                - textbox [ref=e337]: local
+                            - combobox [ref=e339] [cursor=pointer]:
+                                - img
+                                - generic [ref=e340]: master
+                                - img
+                            - textbox [ref=e341]: master
+        - button "Toggle main sidebar" [pressed] [ref=e342] [cursor=pointer]:
+            - img
+            - generic [ref=e56]: Toggle Sidebar
+    - generic:
+        - region "Notifications"
+    - generic:
+        - region "Notifications"

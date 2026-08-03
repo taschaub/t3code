@@ -1,0 +1,116 @@
+- generic [ref=e1]:
+    - generic [ref=e3]:
+        - generic [ref=e6]:
+            - link [ref=e57] [cursor=pointer]:
+                - /url: /
+                - img [ref=e58]
+                - generic [ref=e11]: Code
+                - generic [ref=e12]: Dev
+            - generic [ref=e14]:
+                - list [ref=e16]:
+                    - listitem [ref=e17]:
+                        - button [expanded] [ref=e59] [cursor=pointer]:
+                            - img [ref=e19]
+                            - generic [ref=e22]: Search
+                            - generic: ⌘K
+                - generic [ref=e23]:
+                    - generic [ref=e24]:
+                        - generic [ref=e25]: Projects
+                        - generic [ref=e26]:
+                            - button [ref=e27] [cursor=pointer]:
+                                - img [ref=e28]
+                            - button [ref=e60] [cursor=pointer]:
+                                - img [ref=e32]
+                    - generic [ref=e34]: No projects yet
+            - separator [ref=e35]
+            - list [ref=e37]:
+                - listitem [ref=e38]:
+                    - button [ref=e61] [cursor=pointer]:
+                        - img [ref=e40]
+                        - generic [ref=e43]: Settings
+            - button [ref=e62]
+        - main [ref=e45]:
+            - generic [ref=e46]:
+                - generic [ref=e49]: No active thread
+                - generic [ref=e52]:
+                    - generic [ref=e53]: Pick a thread to continue
+                    - generic [ref=e54]: Select an existing thread or create a new one to get started.
+        - button [pressed] [ref=e63] [cursor=pointer]:
+            - img
+            - generic [ref=e56]: Toggle Sidebar
+    - generic:
+        - region "Notifications"
+    - generic:
+        - region "Notifications"
+    - dialog "Command palette" [ref=e66]:
+        - generic [ref=e151]:
+            - generic [ref=e153]:
+                - button [ref=e155] [cursor=pointer]:
+                    - img [ref=e156]
+                - combobox "Enter path (e.g. ~/projects/my-app)" [active] [ref=e159]: ~/
+            - button "Add (Enter)" [ref=e160] [cursor=pointer]:
+                - generic [ref=e161]: Add
+                - generic:
+                    - generic: Enter
+        - listbox [ref=e164]:
+            - group "Directories" [ref=e165]:
+                - generic [ref=e166]: Directories
+                - option "Applications" [ref=e167] [cursor=pointer]:
+                    - img [ref=e168]
+                    - generic [ref=e171]: Applications
+                - option "Applications (Parallels)" [ref=e172] [cursor=pointer]:
+                    - img [ref=e173]
+                    - generic [ref=e176]: Applications (Parallels)
+                - option "code" [ref=e177] [cursor=pointer]:
+                    - img [ref=e178]
+                    - generic [ref=e181]: code
+                - option "Desktop" [ref=e182] [cursor=pointer]:
+                    - img [ref=e183]
+                    - generic [ref=e186]: Desktop
+                - option "Documents" [ref=e187] [cursor=pointer]:
+                    - img [ref=e188]
+                    - generic [ref=e191]: Documents
+                - option "Downloads" [ref=e192] [cursor=pointer]:
+                    - img [ref=e193]
+                    - generic [ref=e196]: Downloads
+                - option "go" [ref=e197] [cursor=pointer]:
+                    - img [ref=e198]
+                    - generic [ref=e201]: go
+                - option "Library" [ref=e202] [cursor=pointer]:
+                    - img [ref=e203]
+                    - generic [ref=e206]: Library
+                - option "Movies" [ref=e207] [cursor=pointer]:
+                    - img [ref=e208]
+                    - generic [ref=e211]: Movies
+                - option "Music" [ref=e212] [cursor=pointer]:
+                    - img [ref=e213]
+                    - generic [ref=e216]: Music
+                - option "Parallels" [ref=e217] [cursor=pointer]:
+                    - img [ref=e218]
+                    - generic [ref=e221]: Parallels
+                - option "Pictures" [ref=e222] [cursor=pointer]:
+                    - img [ref=e223]
+                    - generic [ref=e226]: Pictures
+                - option "Postman" [ref=e227] [cursor=pointer]:
+                    - img [ref=e228]
+                    - generic [ref=e231]: Postman
+                - option "Public" [ref=e232] [cursor=pointer]:
+                    - img [ref=e233]
+                    - generic [ref=e236]: Public
+                - option "temp" [ref=e237] [cursor=pointer]:
+                    - img [ref=e238]
+                    - generic [ref=e241]: temp
+        - generic [ref=e245]:
+            - generic [ref=e246]:
+                - generic:
+                    - img
+                - generic:
+                    - img
+                - generic [ref=e247]: Navigate
+            - generic [ref=e248]:
+                - generic: Backspace
+                - generic [ref=e249]: Back
+            - generic [ref=e250]:
+                - generic: Esc
+                - generic [ref=e251]: Close
+        - textbox [ref=e252]: ~/

@@ -1,0 +1,195 @@
+- generic [ref=f4e1]:
+    - generic [ref=f4e3]:
+        - generic [ref=f4e6]:
+            - link "Go to threads" [ref=f4e495] [cursor=pointer]:
+                - /url: /
+                - img "T3" [ref=f4e496]
+                - generic [ref=f4e11]: Code
+                - generic [ref=f4e12]: Dev
+            - generic [ref=f4e14]:
+                - list [ref=f4e16]:
+                    - listitem [ref=f4e17]:
+                        - button "Search ⌘K" [ref=f4e497] [cursor=pointer]:
+                            - img [ref=f4e19]
+                            - generic [ref=f4e22]: Search
+                            - generic: ⌘K
+                - generic [ref=f4e23]:
+                    - generic [ref=f4e24]:
+                        - generic [ref=f4e25]: Projects
+                        - generic [ref=f4e26]:
+                            - button [ref=f4e27] [cursor=pointer]:
+                                - img [ref=f4e28]
+                            - button "Add project" [ref=f4e498] [cursor=pointer]:
+                                - img [ref=f4e32]
+                    - list [ref=f4e47]:
+                        - listitem [ref=f4e48]:
+                            - generic [ref=f4e49]:
+                                - button "t3-demo-repo" [ref=f4e499] [cursor=pointer]:
+                                    - img [ref=f4e51]
+                                    - generic [ref=f4e54]: t3-demo-repo
+                                - generic:
+                                    - button "Create new thread in t3-demo-repo":
+                                        - img
+                            - list [ref=f4e55]:
+                                - listitem [ref=f4e56]:
+                                    - button "Add Hello World script Archive Add Hello World script 9m ago" [ref=f4e500] [cursor=pointer]:
+                                        - generic [ref=f4e59]: Add Hello World script
+                                        - generic [ref=f4e61]:
+                                            - generic:
+                                                - button "Archive Add Hello World script":
+                                                    - img
+                                            - generic:
+                                                - generic:
+                                                    - generic: 9m ago
+            - separator [ref=f4e35]
+            - list [ref=f4e37]:
+                - listitem [ref=f4e38]:
+                    - button "Settings" [ref=f4e501] [cursor=pointer]:
+                        - img [ref=f4e40]
+                        - generic [ref=f4e43]: Settings
+            - button "Resize Sidebar" [ref=f4e502]
+        - main [ref=f4e62]:
+            - generic [ref=f4e64]:
+                - generic [ref=f4e65]:
+                    - generic [ref=f4e67]:
+                        - button "Toggle terminal drawer" [ref=f4e503] [cursor=pointer]:
+                            - img
+                        - button "Toggle right panel" [ref=f4e504] [cursor=pointer]:
+                            - img
+                    - generic [ref=f4e70]:
+                        - heading "Add Hello World script" [level=2] [ref=f4e505]
+                        - generic [ref=f4e73]:
+                            - button "Add action" [ref=f4e506] [cursor=pointer]:
+                                - img
+                                - generic [ref=f4e75]: Add action
+                            - group "Open in editor" [ref=f4e507]:
+                                - button "Open" [ref=f4e508] [cursor=pointer]:
+                                    - img
+                                    - generic [ref=f4e78]: Open
+                                - separator
+                                - button "Copy options" [ref=f4e509] [cursor=pointer]:
+                                    - img
+                            - group "Git actions" [ref=f4e510]:
+                                - button "Commit" [ref=f4e511] [cursor=pointer]:
+                                    - img
+                                    - generic [ref=f4e82]: Commit
+                                - separator
+                                - button "Git action options" [ref=f4e512] [cursor=pointer]:
+                                    - img
+                - generic [ref=f4e85]:
+                    - generic [ref=f4e87]:
+                        - generic [ref=f4e92]:
+                            - generic [ref=f4e96]:
+                                - paragraph [ref=f4e481]: Create a file hello.py that prints "Hello, world!"
+                                - generic [ref=f4e103]:
+                                    - paragraph [ref=f4e104]: 13:33
+                                    - generic [ref=f4e105]:
+                                        - button "Edit message and resend" [ref=f4e513] [cursor=pointer]:
+                                            - img
+                                        - button "Revert to this message" [ref=f4e514] [cursor=pointer]:
+                                            - img
+                                        - button "Copy link" [ref=f4e515] [cursor=pointer]:
+                                            - img
+                            - button "Worked for 6.8s" [ref=f4e516] [cursor=pointer]:
+                                - generic [ref=f4e114]: Worked for 6.8s
+                                - img [ref=f4e115]
+                            - generic [ref=f4e120]:
+                                - paragraph [ref=f4e482]:
+                                    - text: Created
+                                    - link "hello.py" [ref=f4e517] [cursor=pointer]:
+                                        - /url: /tmp/t3-demo-repo/hello.py
+                                        - img [ref=f4e484]
+                                        - generic [ref=f4e486]: hello.py
+                                    - text: with the requested
+                                    - code [ref=f4e487]: print("Hello, world!")
+                                    - text: statement.
+                                - generic [ref=f4e128]:
+                                    - generic [ref=f4e129]:
+                                        - paragraph [ref=f4e130]:
+                                            - generic [ref=f4e131]: Changed files (1)
+                                            - text: •
+                                            - generic [ref=f4e132]:
+                                                - generic [ref=f4e133]: "+1"
+                                                - generic [ref=f4e134]: "-0"
+                                        - generic [ref=f4e135]:
+                                            - button "Collapse all" [ref=f4e518] [cursor=pointer]
+                                            - button "View diff" [ref=f4e519] [cursor=pointer]
+                                    - button "hello.py +1 -0" [ref=f4e520]:
+                                        - img [ref=f4e140]
+                                        - generic [ref=f4e142]: hello.py
+                                        - generic [ref=f4e144]:
+                                            - generic [ref=f4e145]: "+1"
+                                            - generic [ref=f4e146]: "-0"
+                                - generic [ref=f4e147]:
+                                    - button "Copy link" [ref=f4e521] [cursor=pointer]:
+                                        - img
+                                    - button "Branch chat from here" [ref=f4e522] [cursor=pointer]:
+                                        - img
+                                    - paragraph [ref=f4e150]: 13:33
+                            - generic [ref=f4e154]:
+                                - paragraph [ref=f4e488]: Now add a goodbye.py that prints "Goodbye!"
+                                - generic [ref=f4e161]:
+                                    - paragraph [ref=f4e162]: 13:34
+                                    - button "Copy link" [ref=f4e523] [cursor=pointer]:
+                                        - img
+                        - 'button "Jump to message: User message" [ref=f4e524] [cursor=pointer]'
+                    - generic:
+                        - generic [ref=f4e216]:
+                            - alert [ref=f4e528]:
+                                - generic [ref=f4e529]:
+                                    - img [ref=f4e531]
+                                    - generic [ref=f4e534]:
+                                        - generic [ref=f4e535]: Thread reverted
+                                        - generic [ref=f4e536]: Messages and workspace files were rolled back to the checkpoint. Redo restores them until you send a new message.
+                                    - button "Redo" [ref=f4e539] [cursor=pointer]
+                            - generic [ref=f4e220]:
+                                - generic [ref=f4e223]:
+                                    - textbox [active] [ref=f4e224]:
+                                        - paragraph [ref=f4e225]
+                                    - generic: Ask anything, @tag files/folders, $use skills, or / for commands
+                                - generic [ref=f4e226]:
+                                    - generic [ref=f4e227]:
+                                        - button "GPT-5.4" [ref=f4e540] [cursor=pointer]:
+                                            - generic [ref=f4e229]:
+                                                - generic [ref=f4e230]:
+                                                    - img
+                                                - generic [ref=f4e231]: GPT-5.4
+                                            - generic [ref=f4e232]:
+                                                - img
+                                        - separator [ref=f4e233]
+                                        - button "Medium · Fast" [ref=f4e541] [cursor=pointer]:
+                                            - generic [ref=f4e235]:
+                                                - text: Medium · Fast
+                                                - img
+                                        - separator [ref=f4e236]
+                                        - combobox "Runtime mode" [ref=f4e542] [cursor=pointer]:
+                                            - img
+                                            - generic [ref=f4e238]: Full access
+                                            - generic [ref=f4e239]:
+                                                - img
+                                        - textbox [ref=f4e240]: full-access
+                                        - separator [ref=f4e241]
+                                        - button "Default mode — click to enter plan mode" [ref=f4e543] [cursor=pointer]:
+                                            - img
+                                            - generic [ref=f4e243]: Build
+                                    - generic [ref=f4e244]:
+                                        - button "Context window 3% used" [ref=f4e544] [cursor=pointer]:
+                                            - img [ref=f4e247]
+                                        - button "Send message" [disabled]:
+                                            - img
+                        - generic [ref=f4e251]:
+                            - generic [ref=f4e253]:
+                                - img [ref=f4e254]
+                                - text: Local checkout
+                            - combobox [ref=f4e257] [cursor=pointer]:
+                                - img
+                                - generic [ref=f4e258]: master
+                                - img
+                            - textbox [ref=f4e259]: master
+        - button "Toggle main sidebar" [pressed] [ref=f4e545] [cursor=pointer]:
+            - img
+            - generic [ref=f4e46]: Toggle Sidebar
+    - generic:
+        - region "Notifications"
+    - generic:
+        - region "Notifications"
