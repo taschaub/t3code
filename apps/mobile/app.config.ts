@@ -187,12 +187,14 @@ const config: ExpoConfig = {
     bundleIdentifier: iosBundleIdentifier,
     // Pin code signing to the T3 Tools team so non-interactive `expo run:ios`
     // does not fall back to a personal team (which cannot sign app groups,
-    // Sign in with Apple, or push notification entitlements).
-    appleTeamId: "ARK85ZXQ4Z",
-    associatedDomains: [
-      `applinks:${variant.relyingParty}`,
-      `webcredentials:${variant.relyingParty}`,
-    ],
+    // Sign in with Apple, or push notification entitlements). Personal Team
+    // builds must not inherit the pin — the account is not in the T3 team.
+    appleTeamId: isIosPersonalTeamBuild ? undefined : "ARK85ZXQ4Z",
+    // Associated domains (universal links + passkeys) cannot be signed by
+    // free Personal Teams, so omit them for those builds.
+    associatedDomains: isIosPersonalTeamBuild
+      ? undefined
+      : [`applinks:${variant.relyingParty}`, `webcredentials:${variant.relyingParty}`],
     infoPlist: {
       NSAppTransportSecurity: {
         NSAllowsArbitraryLoads: true,
@@ -234,6 +236,11 @@ const config: ExpoConfig = {
     favicon: variant.assets.appIcon,
   },
   plugins: [
+    // Must be FIRST: same-type mods run last-registered-first, so registering
+    // this earliest makes its entitlements mod run AFTER all other plugins.
+    // Otherwise expo-notifications re-adds aps-environment, which free
+    // Personal Teams cannot sign.
+    ...(isIosPersonalTeamBuild ? ["./plugins/withoutIosPersonalTeamCapabilities.cjs"] : []),
     "expo-asset",
     [
       "expo-font",
@@ -338,7 +345,6 @@ const config: ExpoConfig = {
     "./plugins/withAndroidModernPopupMenu.cjs",
     "./plugins/withAndroidModernAlertDialog.cjs",
     "./plugins/withAndroidPredictiveBackCompat.cjs",
-    ...(isIosPersonalTeamBuild ? ["./plugins/withoutIosPersonalTeamCapabilities.cjs"] : []),
   ],
   extra: {
     appVariant: APP_VARIANT,
