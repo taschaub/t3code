@@ -202,6 +202,33 @@ const widgetsPlugin: NonNullable<ExpoConfig["plugins"]>[number] = [
           initialLayout: "./src/widgets/AgentActivityWidget.tsx",
         },
       },
+      {
+        name: "QuickActions",
+        displayName: "Quick actions",
+        description: "Start a thread, reopen your last one, and see running agents.",
+        // Android offers the same destinations as launcher shortcuts.
+        android: null,
+        ios: {
+          configuration: {
+            title: "Quick actions",
+            description:
+              "Small and Lock Screen widgets open one destination. Larger widgets offer both.",
+            parameters: {
+              action: {
+                title: "Opens",
+                type: "enum",
+                default: "new",
+                values: [
+                  { name: "New thread", value: "new" },
+                  { name: "Last thread", value: "last" },
+                ],
+              },
+            },
+          },
+          supportedFamilies: ["systemSmall", "systemMedium", "systemLarge", "accessoryCircular"],
+          initialLayout: "./src/widgets/QuickActionsWidget.tsx",
+        },
+      },
     ],
   },
 ];

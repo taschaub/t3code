@@ -11,7 +11,7 @@ import { buildSubscriptionUsageSnapshot } from "./subscriptionUsageSnapshot";
 import { createWidgetTheme } from "./widgetTheme";
 
 // Isolate quota changes from the much busier thread/config presentation stream.
-const snapshotAtom = Atom.make((get) =>
+export const subscriptionUsageSnapshotAtom = Atom.make((get) =>
   buildSubscriptionUsageSnapshot(
     get(environmentPresentations.presentationsWithProvidersAtom),
     Linking.createURL("settings/usage", { queryParams: { tab: "limits" } }),
@@ -27,7 +27,7 @@ export function SubscriptionUsageCoordinator() {
     isReady: appearanceReady,
   } = useAppearancePreferences();
   const catalog = useAtomValue(environmentCatalog.catalogValueAtom);
-  const snapshot = useAtomValue(snapshotAtom);
+  const snapshot = useAtomValue(subscriptionUsageSnapshotAtom);
   const androidAppearance = Platform.OS === "android" ? themeAppearance : null;
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- publishes subscription usage and theme to the native home screen widget
   useEffect(() => {
